@@ -8,10 +8,18 @@
 
 ## What lives here
 
-**Focus: TBD.** `bolt` is a fresh JangLabs lab, scaffolded as its own repo and wired into the
-workspace as a submodule. Its purpose hasn't been pinned down yet — update this section (and the
-lab row in the root [`../README.md`](../README.md) and [`../CLAUDE.md`](../CLAUDE.md)) once the lab's
-focus is decided.
+**Focus: the routed-memory reseed.** `bolt` is the clean-slate reseed of the tag-routed
+memory subsystem that grew over-tooled and splintered in the [`synapse`](../synapse) lab. Its
+primary artifact is [`CORE-SPEC.md`](./CORE-SPEC.md) — one self-contained spec
+from which that subsystem can be cleanly reseeded (recall, write-guard, self-curation, catalog,
+collision-projection). [`CONTEXT.md`](./CONTEXT.md) is the one-screen domain glossary.
+
+The spec is **distilled** from sources that live in the sibling `synapse` lab — its ADRs
+(`../synapse/docs/adr/`), seed inventory (`../synapse/openspec/specs/_PENDING-FROM-GSD.md`), the two
+promoted OpenSpec specs, and the live engine (`../synapse/lib/memory_surface.py`, the tiebreaker on
+conflicts). Those are referenced **by path, never vendored** — honoring the workspace rule against
+copying a sibling lab's files. Synapse's base-harness and the corpusforge apparatus are explicitly
+**out of scope** for this reseed.
 
 ## Conventions
 
