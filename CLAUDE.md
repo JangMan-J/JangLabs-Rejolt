@@ -24,8 +24,12 @@ explicitly **out of scope** for this reseed.
 ## Conventions
 
 - **Branch for PRs:** `main`.
-- This lab is its own git repo. Commit and push *inside* `bolt/`, then bump the pinned SHA at the
-  JangLabs root (`git add bolt && git commit`).
+- This lab is its own git repo. Commit and push *inside* `bolt/`.
+- **Root SHA bump — only when the root is a git repo.** When the JangLabs workspace root tracks
+  `bolt/` as a submodule/gitlink, also bump the pinned SHA there after pushing
+  (`git -C ~/JangLabs add bolt && git -C ~/JangLabs commit`). As of this writing `~/JangLabs` is
+  **not** a git repo (no `.git`, no `.gitmodules`), so that step is inert — skip it; don't run the
+  command (it will fail) until the root is actually a repo.
 
 ## Agent skills
 
