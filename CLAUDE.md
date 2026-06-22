@@ -18,8 +18,8 @@ The spec is **distilled** from sources that live in the sibling `synapse` lab â€
 (`../synapse/docs/adr/`), seed inventory (`../synapse/openspec/specs/_PENDING-FROM-GSD.md`), the two
 promoted OpenSpec specs, and the live engine (`../synapse/lib/memory_surface.py`, the tiebreaker on
 conflicts). Those are referenced **by path, never vendored** â€” honoring the workspace rule against
-copying a sibling lab's files. Synapse's base-harness and the corpusforge apparatus are explicitly
-**out of scope** for this reseed.
+copying a sibling lab's files. Host-runtime base harnesses and the corpusforge apparatus are
+explicitly **out of scope** for this reseed.
 
 ## Conventions
 

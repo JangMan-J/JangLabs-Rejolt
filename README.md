@@ -13,8 +13,8 @@ never vendored).
 
 - [`CLAUDE.md`](./CLAUDE.md) — agent conventions and the lab-scope banner. Read first when working here.
 - [`CORE-SPEC.md`](./CORE-SPEC.md) — **the deliverable**: the consolidated reseed
-  spec (recall, write-guard, self-curation, catalog, collision-projection; base-harness and
-  corpusforge fenced out).
+  spec (recall, write-guard, self-curation, catalog, collision-projection; host-runtime base
+  harnesses and corpusforge fenced out).
 - [`CONTEXT.md`](./CONTEXT.md) — one-screen domain glossary (the single-context doc the engineering
   skills read before exploring).
 - [`docs/agents/`](./docs/agents/) — per-repo configuration for the engineering skills (issue tracker,
