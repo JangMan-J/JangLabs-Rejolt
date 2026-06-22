@@ -1,8 +1,9 @@
 # JangLabs-Bolt
 
 A **JangLabs lab** — an independent, standalone git repo (with its own remote) living at path
-`bolt/` in the [JangLabs](https://github.com/JangMan-J/JangLabs) multi-lab workspace. The workspace
-is a plain directory, not a git superproject, so this is **not** a submodule.
+`bolt/` in the local **JangLabs** multi-lab workspace. That workspace is just a directory of
+independent project repos — there is no `JangLabs` umbrella repo and no git superproject, so this
+is **not** a submodule.
 
 **Focus: the routed-memory reseed.** `bolt` is the clean-slate reseed of the tag-routed memory
 subsystem that grew over-tooled and splintered in the sibling [`synapse`](../synapse) lab. Its
