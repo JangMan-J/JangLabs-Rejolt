@@ -1,7 +1,8 @@
 # JangLabs-Bolt
 
-A **JangLabs lab** — an independent repo wired into the [JangLabs](https://github.com/JangMan-J/JangLabs)
-multi-lab workspace as a git submodule (path `bolt/`).
+A **JangLabs lab** — an independent, standalone git repo (with its own remote) living at path
+`bolt/` in the [JangLabs](https://github.com/JangMan-J/JangLabs) multi-lab workspace. The workspace
+is a plain directory, not a git superproject, so this is **not** a submodule.
 
 **Focus: the routed-memory reseed.** `bolt` is the clean-slate reseed of the tag-routed memory
 subsystem that grew over-tooled and splintered in the sibling [`synapse`](../synapse) lab. Its
@@ -22,5 +23,6 @@ never vendored).
 
 ## Working here
 
-This is its own git repo. Make changes here, commit and push inside `bolt/`, then back at the JangLabs
-root bump the pinned submodule SHA (`git add bolt && git commit`).
+This is its own standalone git repo with its own remote. Make changes here, then commit and push
+inside `bolt/` — that's the whole publish flow. There is no JangLabs superproject to update (the
+workspace root is just a directory, not a git repo), so there's no submodule SHA to bump.
