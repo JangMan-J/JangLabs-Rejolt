@@ -1,11 +1,11 @@
-# JangLabs-Bolt
+# JangLabs-Rejolt
 
 A **JangLabs lab** — an independent, standalone git repo (with its own remote) living at path
-`bolt/` in the local **JangLabs** multi-lab workspace. That workspace is just a directory of
+`rejolt/` in the local **JangLabs** multi-lab workspace. That workspace is just a directory of
 independent project repos — there is no `JangLabs` umbrella repo and no git superproject, so this
 is **not** a submodule.
 
-**Focus: the routed-memory reseed.** `bolt` is the clean-slate reseed of the tag-routed memory
+**Focus: the routed-memory reseed.** `rejolt` is the clean-slate reseed of the tag-routed memory
 subsystem that grew over-tooled and splintered in the sibling [`synapse`](../synapse) lab. Its
 deliverable is a single self-contained core spec from which that subsystem can be cleanly re-grown,
 distilled from synapse's ADRs, seed inventory, OpenSpec specs, and live engine (referenced by path,
@@ -25,5 +25,5 @@ never vendored).
 ## Working here
 
 This is its own standalone git repo with its own remote. Make changes here, then commit and push
-inside `bolt/` — that's the whole publish flow. There is no JangLabs superproject to update (the
+inside `rejolt/` — that's the whole publish flow. There is no JangLabs superproject to update (the
 workspace root is just a directory, not a git repo), so there's no submodule SHA to bump.

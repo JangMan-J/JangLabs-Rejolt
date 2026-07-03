@@ -1,6 +1,6 @@
-# CONTEXT — bolt (routed-memory reseed)
+# CONTEXT — rejolt (routed-memory reseed)
 
-Domain glossary for the `bolt` lab. The lab's full deliverable is [`CORE-SPEC.md`](./CORE-SPEC.md) —
+Domain glossary for the `rejolt` lab. The lab's full deliverable is [`CORE-SPEC.md`](./CORE-SPEC.md) —
 the consolidated reseed spec for the tag-routed memory subsystem distilled from the sibling
 [`synapse`](../synapse) lab. **Read `CORE-SPEC.md` for the actual contract;** this file is the
 one-screen vocabulary the engineering skills read before exploring.
