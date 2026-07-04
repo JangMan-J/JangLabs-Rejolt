@@ -375,24 +375,39 @@ fn bench_nobaseline_exits_zero() {
 // =============================================================================
 
 #[test]
-fn maintain_and_seats_are_loud_not_yet_wired_stubs() {
-    let (_base, store, _g) = boot("stubs");
+fn maintain_and_seats_are_wired_and_exit_zero_with_no_evidence() {
+    // WP-6 wires the curation engine; a freshly-bootstrapped store has no
+    // telemetry at all, so every one of these is a NORMAL (exit 0) no-op, never
+    // the old "NOT YET WIRED" exit-1 stub.
+    let (_base, store, _g) = boot("curation-wired");
     let s = store.to_str().unwrap();
 
+    // No telemetry file at all -> below the ≥50-record trigger -> exit 0.
     let maintain = run(&["maintain", "--store", s], "");
+    assert_eq!(maintain.code, 0, "below-trigger maintain is a normal no-op");
+    assert!(maintain.stdout.contains("below the maintenance trigger"));
+
+    // `--force` bypasses the record-count trigger but not the minimum-evidence
+    // floor — a fresh store has zero telemetry, so evidence is insufficient.
+    let maintain_forced = run(&["maintain", "--store", s, "--force"], "");
     assert_eq!(
-        maintain.code, 1,
-        "maintain stub is loud + non-success (WP-6)"
+        maintain_forced.code, 0,
+        "insufficient-evidence maintain is a normal no-op, not a failure"
     );
-    assert!(maintain.stderr.contains("NOT YET WIRED"));
+    assert!(maintain_forced.stdout.contains("insufficient evidence"));
 
+    // Seats: the bootstrap MEMORY.md seed carries no seats and no telemetry —
+    // insufficient evidence, exit 0, never a failure.
     let seats = run(&["seats", "--store", s], "");
-    assert_eq!(seats.code, 1, "seats stub is loud + non-success (WP-6)");
-    assert!(seats.stderr.contains("NOT YET WIRED"));
+    assert_eq!(
+        seats.code, 0,
+        "insufficient-evidence seats is a normal no-op"
+    );
+    assert!(seats.stdout.contains("insufficient evidence"));
 
-    // The Appendix D flag surface still parses (WP-8 consumes it verbatim).
-    assert_eq!(run(&["maintain", "--store", s, "--force"], "").code, 1);
-    assert_eq!(run(&["seats", "--store", s, "--propose"], "").code, 1);
+    let seats_propose = run(&["seats", "--store", s, "--propose"], "");
+    assert_eq!(seats_propose.code, 0);
+    assert!(seats_propose.stdout.contains("insufficient evidence"));
 }
 
 #[test]
