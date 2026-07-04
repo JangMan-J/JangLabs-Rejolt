@@ -57,8 +57,8 @@ never closes it — the observation is the evidence):
 | WP | P-items | Commit | Tests (cum.) | Notes |
 |----|---------|--------|--------------|-------|
 | WP-0 | P1 | `f9616df` | 5 | Skeleton + G2 harness proven (rubber-stamp self-test) |
-| WP-1 | P2, P3 | `see log` | 21 fns / 39 fixtures | Parser + grammar loader; 6 verify defects fixed & locked before commit |
-| WP-2 | P4, P5 | _pending_ | | |
+| WP-1 | P2, P3 | `c07dcd6` | 21 fns / 39 fixtures | Parser + grammar loader; 6 verify defects fixed & locked before commit |
+| WP-2 | P4, P5 | `see log` | 51 (+30) | Flat index + one walk + rebuild + drift; 5 verify defects fixed (byPath `**`, line-safety) |
 | WP-2b | P11 | _pending_ | | |
 | WP-3 | P7, P6 | _pending_ | | |
 | WP-4 | P9, P10 | _pending_ | | |
@@ -86,6 +86,17 @@ _none yet_
   6. nit: `DuplicateFacet.facets` sorted to match its doc.
   Each fix locked into the differential/vector oracle by new good (braced) + bad (inline-comment / colon / bad-escape) fixtures. Confirmed sound and unchanged: metadata-key strictness, A6a fourth-table/dup-facet, version/placement enums, N10/N12, one hand-rolled parser, the differential comparison method.
 
+- **WP-2** (4 Opus lenses vs the synapse ground truth + Python fnmatch, read-only, uncommitted tree): 0 blockers, 3 majors, 2 minors, 2 nits — all empirically confirmed, all fixed & locked before commit:
+  1. byPath `**` false-fire (MAJOR, D5 precision): the matcher fired mid/bare `**` (`**`, `**/*.md`, `~/**/settings.json`) on every path. The frozen ground truth (Appendix A → `memory_surface.py:1765-1771`, "`**` sanctioned ONLY as trailing `/**`") skips them as broad (§3.x). Added the missing skip branch; corrected the two tests that wrongly asserted `**/*.md` fires.
+  2. control chars break one-record-per-line (MAJOR×2 + minor, A2e/RB2): the exclusion guarded only the routing `pattern`, so a `\t`/`\n` in `lastReviewed` or in a memory's FILENAME (→ memory_id/route_tag/path columns) split the line → whole index `Malformed` → recall silently index-free store-wide. Generalized: filename-hostile memories excluded+reported; `lastReviewed` sanitized; `emit` `debug_assert` no-control-char tripwire.
+  3. fnmatch `[^...]` parity (minor): `^` is a literal class member in Python fnmatch (only `!` negates) — fixed.
+  4. generation_id NUL-framing not injective (nit): length-prefixed hash fields.
+  5. no fsync in write_atomic (nit): fsync temp + parent dir (D14 durable across power loss).
+  Confirmed sound & unchanged: normalization symmetry (the A2 fix), RB9 one-walk, torn-pair detection, single-reader fail-open, tier map, D10 partition, N1/N2/N5/N10/N11/N12.
+
 ## Spec-friction reports from builders (G5)
 
-_none yet — WP-0, WP-1 raised no G4 spec contradictions (WP-1's builder notes were interpretation/under-spec points, not contradictions)_
+- **WP-2 friction #1 — the `type` column (RESOLVED, no amendment).** Appendix A's 13-column schema carries both `trigger_type` and `type`; the reseed frontmatter (D21) has no `type` key. Synapse tiebreaker (`memory_surface.py`): `trigger_type` = the axis (command/path/arg/synonym), used for tier + the citation `{tag} ← {trigger_type}:{matched_value}` (:2091) — POPULATED; `type` = `meta.get("type","")` (a memory-classification field the reseed dropped along with synapse's `_type_boost`). So `type` is a faithful empty reserved column and the P6 citation must read `trigger_type`. **Directive to WP-3:** the recall citation uses the populated `trigger_type`/axis, NOT the empty `type` column.
+- **WP-2 friction #2 — §11 BLOCK-degenerate assertion (deferred to WP-4, fail-open).** The drift guardrail's assertion 2 (and the broad-path arm of assertion 1) need WP-4's `is_broad_path` + collision projection; they ship as documented fail-open stubs (`would_block_degenerate`, `static_gate_would_deny`) — no false advisory, no block. **Directive to WP-4:** tighten these named predicates once `is_broad_path`/BLOCK-degenerate exist.
+
+_No WP-0/WP-1/WP-2 builder note rose to a G4 spec contradiction; all were interpretation/under-spec points resolved via the ground-truth tiebreaker._

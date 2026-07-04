@@ -11,11 +11,15 @@
 //! harness. Real behavior lands in later packets, which add their own modules
 //! rather than filling stubs guessed here.
 
+pub mod catalog;
 pub mod cli;
 pub mod conformance;
 pub mod frontmatter;
 pub mod grammar;
+pub mod index;
+pub mod rebuild;
 pub mod tag;
+pub mod tier;
 
 /// The crate version, sourced from Cargo at compile time. Surfaced by
 /// `rejolt --version` and asserted against by the CLI smoke test so the binary

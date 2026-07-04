@@ -46,3 +46,14 @@ fixtures/<area>/bad/    # non-conformant inputs — the check MUST reject each
   entry field), each rejected as an exit-2 config/taxonomy error. The check
   `grammar-load-valid` accepts iff parse + validate succeeds. See
   `tests/grammar.rs`.
+- `flat-index/` — WP-2 (P5). The flat recall-index loader (Appendix A; D24, A2,
+  A3). `good/` = a well-formed index file (metadata header + valid 13-column
+  records) and an empty index (header alone); `bad/` = malformed index files
+  (missing header, wrong column count, unknown table name, non-integer
+  `declineCount`, bad `source` token). The check `index-record-parse-valid`
+  accepts iff the metadata header parses AND every non-comment line is a valid
+  record — exactly the reader's index-side parse. The build-side risk-register
+  rows (RB2 one-record-per-line under hostile content, RB4 torn-pair, RB9
+  recall ≡ projection, RB11 byPath glob, key normalization, atomicity, drift
+  guardrail) are explicit good-passes/bad-fails assertions over temp stores. See
+  `tests/flat_index.rs`.
