@@ -5,7 +5,7 @@
 **Spec:** `docs/frozen/routed-memory-reseed-decisions-20260703.md` + `docs/frozen/routed-memory-reseed-amendments.md` (A1–A7).
 **Gate record:** gate-plan run 2026-07-04. A1 follow-up discharged 2026-07-04: S1 bias-lens red-team (6 lenses per brain-soup ADR-0005 basis), 22 findings → A2–A7 + plan constraints. S2 red-team 2026-07-04: 3 lenses (traceability/autonomy/technical), 15 findings, all folded → v0.1 (route_tag+source columns; byPath normalization exemption; WP-2b hoist; RB1 split; dialect rejection surface + named oracle; CLI flag table; §11 asserts into P4; R7 window semantics into P11/P13). Codex consultant review (multipass, 2 turns, 2026-07-04): 3/3 owner calls AGREE, material gaps none; adversarial probe folded — RB1(b) hoisted to build start, Call-1 cold-start pushback recorded with a delta option for the owner.
 **trace-lint:** PASS 2026-07-04 (`~/JangLabs/jskills/workflow/bin/trace-lint.sh <spec> <plan> <amendments>`), re-run pending at freeze.
-**Freeze-commit:** pending.
+**Freeze-commit:** `69184e7185d9a9c10e371fd3f80ec9bb1e1ddf46` (/vet's DIFF anchor).
 
 <!-- Trace grammar per WORKFLOW.md §4: every P ends `← refs`. -->
 
