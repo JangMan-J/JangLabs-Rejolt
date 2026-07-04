@@ -333,10 +333,14 @@ fn dispatch_session_start(op: &NormalizedOp, store: &Path, config: &Config) -> i
     let telemetry = Telemetry::for_store(store, config.clone());
     telemetry.log_session();
 
-    // 2. The maintenance-due check: computed + exposed, NOT acted on (WP-6's
-    //    `curation::maintain` does not exist in this worktree).
-    let _maintenance_due = maintenance_due(store, &telemetry);
-    // INTEGRATOR: if maintenance_due(...) { curation::maintain(store) }  // wired post-merge (WP-6)
+    // 2. The maintenance-due check → run the curation pass when due (A7 ordering:
+    //    the marker + this check both run BEFORE the at-home floor skip). The pass
+    //    is internally concurrency-guarded (O_EXCL lock + recheck-under-lock, WR-01/
+    //    WR-02), so a racing session-start no-ops; fail-open — its outcome is
+    //    discarded and a maintenance fault never blocks session start (quiet, §8).
+    if maintenance_due(store, &telemetry) {
+        let _ = crate::curation::maintain(store, config, false);
+    }
 
     // 3. The at-home floor skip, THEN the advisories (A7 ordering: 1 and 2 run
     //    unconditionally above; only the advisories are skipped at-home).
