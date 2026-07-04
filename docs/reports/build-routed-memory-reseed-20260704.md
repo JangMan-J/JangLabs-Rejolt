@@ -63,8 +63,8 @@ never closes it — the observation is the evidence):
 | WP-3 | P7, P6 | `5cb8433` | 100 (+30) | Host-event parser + recall; 3 verify defects fixed (generic-verb shadow, web-keyword tier, is_full_write gate) |
 | WP-4 | P9, P10 | `6ded6c9` | 132 (+32) | Write guard (fail-closed boundary) + projection + is_broad_path; 3 verify defects fixed (false-deny) |
 | WP-7 | P13, P14, P15 | `2ca2929` | 182 (+50) | Config + CLI surface + bootstrap + bench/calibration; 5 verify defects fixed (bootstrap fail-open, A4 slack) |
-| WP-5 | P8 | _pending_ | | |
-| WP-6 | P12 | _pending_ | | |
+| WP-5 | P8 | `2a62fbe` | 225 | Hook dispatch (parallel/sonnet); 2 verify defects fixed (suppressOutput, +exit-taxonomy CLEAN) |
+| WP-6 | P12 | `2a62fbe` | 225 | Curation floors + locks (parallel/sonnet); 3 verify defects fixed (min-evidence span, seats) |
 | WP-8 | P16, P17, P18 | _pending_ | | |
 
 ## Amendments raised during build (G4)
@@ -115,6 +115,12 @@ _none yet_
   2. A4(c) slack floor measured-but-unapplied (MAJOR): `regression_ceiling` used only the §9 static `max(25%,15ms)`, ignoring the stored calibrated jitter → a noisy box could block on an in-jitter run (the drift A4 exists to retire). Fixed: `ceiling = baseline + max(25%, 15ms, ceiling_slack_ms)`.
   3–5. minors: `dedup_backstop_threshold` config key spelling (→ `#[serde(rename = "DEDUP_BACKSTOP_THRESHOLD")]`); `BUDGET_MS` dead-knob doc corrected (superseded by A4 budget); `--update-baseline` no longer synthesizes a design budget from the real store (A4(a) — inert until `--calibrate`).
   Confirmed sound: D13/N7 (engine writes no host policy; `--print-hooks` to stdout; `~/.claude` never created), bootstrap idempotence + never-overwrite, empty seed = version line alone, config unknown-key WARN + hook fail-open, env fingerprint kernel-excluded (RB10), LOUD degrade, NOBASELINE interim, no fabricated numbers. **Directive to WP-5:** the hook stub `eprintln!` must become a silent allow (D12 quiet-on-pass).
+- **WP-5 + WP-6** (built in PARALLEL by sonnet in isolated worktrees; 4 Opus verify lenses with extra scrutiny — the RB1(a) exit-taxonomy lens found ZERO defects, empirically confirmed by driving the binary): 0 blockers, 2 majors, 2 minors — all fixed & locked before commit:
+  1. `suppressOutput` nested inside `hookSpecificOutput` (MAJOR): the host reads it only at the TOP LEVEL, so advisory stdout was never suppressed (D12/Appendix C). Moved top-level (synapse parity).
+  2. min-evidence `≥30 days span` leg dead (MAJOR): `evidence_stats` ran over the ≤30d rate window so floor-2's span leg could never fire. Added `unwindowed_earliest_ts`/`unwindowed_session_days` to `WindowedTelemetry`; the guard now uses UNWINDOWED span/session-days (rate stays windowed) — synapse `_evidence_stats` parity.
+  3. seats `seatPromoteMinFires=0` panic (minor): a covered zero-fire seat cleared the gate + panicked (exit 101). Added the zero-fire floor (`fire_count >= 1`) to the seat gate + `get().unwrap_or(0)`.
+  4. seats re-run dropped MEMORY.md leading newlines (minor, §8 byte-identity): `trim_start_matches('\n')` → `strip_prefix('\n')` once.
+  Confirmed sound (sonnet got the hard parts right): the full hook exit taxonomy (0/2 only, never 1; deny short-circuit; kill-switch first — empirically driven), fail-open totality, A7 session-start ordering, D19 no-empty-envelope; and the curation floors, WR-01/WR-02, O_EXCL+rename-to-corpse lock, never-rewrites-bodies (D7). Store resolution (global config.toml) + at-home (cwd==$HOME) are documented fail-open-safe interpretations. **Directive to WP-8:** the recall/kill-switch/§14 fail-open rows land here.
 
 ## Spec-friction reports from builders (G5)
 
