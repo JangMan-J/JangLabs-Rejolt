@@ -59,8 +59,8 @@ never closes it — the observation is the evidence):
 | WP-0 | P1 | `f9616df` | 5 | Skeleton + G2 harness proven (rubber-stamp self-test) |
 | WP-1 | P2, P3 | `c07dcd6` | 21 fns / 39 fixtures | Parser + grammar loader; 6 verify defects fixed & locked before commit |
 | WP-2 | P4, P5 | `2bf5a74` | 51 (+30) | Flat index + one walk + rebuild + drift; 5 verify defects fixed (byPath `**`, line-safety) |
-| WP-2b | P11 | `see log` | 70 (+19) | Marks + telemetry; 5 verify defects fixed (atomic append, injective marks, correlation gating) |
-| WP-3 | P7, P6 | _pending_ | | |
+| WP-2b | P11 | `2e0d8fb` | 70 (+19) | Marks + telemetry; 5 verify defects fixed (atomic append, injective marks, correlation gating) |
+| WP-3 | P7, P6 | `see log` | 100 (+30) | Host-event parser + recall; 3 verify defects fixed (generic-verb shadow, web-keyword tier, is_full_write gate) |
 | WP-4 | P9, P10 | _pending_ | | |
 | WP-7 | P13, P14, P15 | _pending_ | | |
 | WP-5 | P8 | _pending_ | | |
@@ -100,6 +100,11 @@ _none yet_
   4. no-follow TOCTOU + write/advisory disagreement (minor): fixed with `O_NOFOLLOW` opens + `runtime_dir_safe` (euid-owned, not group/world-writable) gating BOTH the write path and the inert advisory.
   5. session markers discarded (nit): surfaced `WindowedTelemetry.sessions` for WP-6 floor-2.
   Dep added: `libc 0.2` (arch-correct O_NOFOLLOW/geteuid; N10-fine). Confirmed sound: TTL single-source, WR-04 `.1`-first, WR-05 bad-ts symmetry, R7 window bound, record shapes, N2/N10/N12. **Directive to WP-3:** call `log_fire(&FireRecord)` (no separate fired_ids). **Directive to WP-6:** consume `WindowedTelemetry.sessions`.
+- **WP-3** (4 Opus lenses vs D1/D3/D5/D19/A5/N3/N11 + the synapse tiebreaker, read-only): 0 blockers, 3 majors, 1 minor — all fixed & locked before commit:
+  1. GENERIC_VERBS applied POST-dedup on the first-seen tuple representative (MAJOR, found by 2 lenses): a generic command shadowed a co-present specific command under the same route_tag → order-dependent silent MISS (`install && rsync` vs `rsync && install` disagreed). Fixed: hit-level generic-verb filter BEFORE the tuple dedup (a command tuple survives iff ≥1 non-generic command matched) — matches synapse's pre-walk filtering.
+  2. web keywords over-tiered into byArg/medium (MAJOR): the tiebreaker routes web/tag-kind tokens through bySynonym/weak only (`kind=="tag"` never consults byArg) — the reseed let one `WebSearch{query}` clear the ≥2 gate synapse keeps silent. Fixed: `web_content` → synonyms bucket only; Bash args keep the args+synonyms dual-lookup.
+  3. `is_full_write` un-gated by tool (minor): a crafted Edit/MultiEdit carrying a `content` key flipped to a guardable full write → a fail-open→fail-closed (N13/D6) inversion risk for WP-4. Fixed: `is_full_write = tool_name=="Write" && content non-empty`.
+  Confirmed sound: index-only/no-rebuild/no-body-load (N11/D1), silence emits nothing (D19), Bash tokenizer + §5.x lexical canonicalization (checked vs real `realpath -sm`), A5b fail-open (no panic on hostile payloads), tier map/penalties/§10 tunables. WebSearch/WebFetch/context7 routing on tool *inputs* is D3-grounded (synapse tiebreaker). **Directive to WP-4:** `is_full_write`/`proposed_content` are Write-only now — still independently confirm tool identity before denying.
 
 ## Spec-friction reports from builders (G5)
 
