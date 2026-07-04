@@ -81,7 +81,13 @@ const MAX_RESULTS: usize = 3;
 /// A command tuple whose matched basename is in this set is dropped from a
 /// memory's candidate tuple set entirely (precision over recall, D5) — so a memory
 /// whose ONLY evidence is a generic-verb command never surfaces.
-const GENERIC_VERBS: &[&str] = &[
+///
+/// `pub` so the WP-4 write-guard **static degenerate gate** reuses the SAME
+/// stop-list for its "only generic/low-signal commands" arm (§6 tier 2): the read
+/// path and the write gate must agree on which commands carry no routing signal,
+/// or the gate would deny a command that recall would happily fire on (or vice
+/// versa). One list, both consumers.
+pub const GENERIC_VERBS: &[&str] = &[
     "restart", "start", "stop", "status", "enable", "disable", "reload", "list", "show", "info",
     "help", "version", "get", "set", "add", "install", "remove", "update", "upgrade", "check",
 ];

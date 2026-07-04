@@ -31,7 +31,7 @@
 //! `validate` CLI (WP-7) maps them to exit 2 via [`GrammarError::exit_code`].
 //! This module wires no CLI; it exposes clean library functions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::Deserialize;
@@ -316,6 +316,75 @@ pub fn parse_and_validate(text: &str) -> Result<Grammar, GrammarError> {
     let g = parse_grammar(text)?;
     validate_grammar(&g)?;
     Ok(g)
+}
+
+/// The FULL set of validation-error signatures for a grammar text — every error,
+/// not just the first (unlike [`validate_grammar`], which fails fast). Each
+/// signature is a stable, content-derived string (e.g. `dup-facet:gpu`,
+/// `no-evidence:domain.gpu`); a text that fails to even parse yields the single
+/// coarse signature `parse` (a parse failure is one blocking error and cannot be
+/// enumerated further).
+///
+/// This is the A6 diff-aware grammar-write surface's building block
+/// ([`crate::guard`]): a full-file grammar write is denied only when it introduces
+/// a signature the CURRENT file does not already have. Because it enumerates ALL
+/// errors, the set-difference is sound — an edit that FIXES one pre-existing error
+/// while leaving another can never be mistaken for introducing a new one (which a
+/// first-error-only comparison would false-deny — the #1-rule violation).
+pub fn error_signatures(text: &str) -> BTreeSet<String> {
+    let g = match parse_grammar(text) {
+        Ok(g) => g,
+        // A deserialization failure (fourth facet table, unknown field, bad
+        // placement, missing version) is a single blocking error.
+        Err(_) => return BTreeSet::from(["parse".to_string()]),
+    };
+    let mut sigs = BTreeSet::new();
+    if g.grammar_version != GRAMMAR_VERSION {
+        sigs.insert(format!("version:{}", g.grammar_version));
+    }
+    // One facet per tag (A6a) — collect EVERY duplicate, not just the first.
+    let mut facets_by_tag: BTreeMap<&str, usize> = BTreeMap::new();
+    for map in [&g.domain, &g.tool, &g.pattern] {
+        for name in map.keys() {
+            *facets_by_tag.entry(name.as_str()).or_default() += 1;
+        }
+    }
+    for (tag, count) in &facets_by_tag {
+        if *count > 1 {
+            sigs.insert(format!("dup-facet:{tag}"));
+        }
+    }
+    // Per-entry gloss + evidence, mirroring [`validate_grammar`]'s checks exactly.
+    for (facet, map) in [
+        ("domain", &g.domain),
+        ("tool", &g.tool),
+        ("pattern", &g.pattern),
+    ] {
+        for (tag, entry) in map {
+            if entry.gloss.trim().is_empty() {
+                sigs.insert(format!("empty-gloss:{facet}.{tag}"));
+            }
+            if entry.gloss.contains(['\n', '\r']) {
+                sigs.insert(format!("multiline-gloss:{facet}.{tag}"));
+            }
+            for (field, arr) in [
+                ("commands", &entry.commands),
+                ("paths", &entry.paths),
+                ("args", &entry.args),
+                ("synonyms", &entry.synonyms),
+            ] {
+                for v in arr {
+                    if v.trim().is_empty() || v.contains(['\t', '\n', '\r']) {
+                        sigs.insert(format!("invalid-evidence:{facet}.{tag}.{field}"));
+                    }
+                }
+            }
+            if !entry.has_behavioral_evidence() {
+                sigs.insert(format!("no-evidence:{facet}.{tag}"));
+            }
+        }
+    }
+    sigs
 }
 
 /// Render the write-context vocabulary digest **from the parsed data** (D23):

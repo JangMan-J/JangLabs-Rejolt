@@ -563,13 +563,15 @@ impl DriftReport {
 /// 2. no curated memory would be BLOCK-degenerate under the current verdict;
 /// 3. the D10 routing-vs-ranking partition holds.
 ///
-/// Assertions 1 and 2 depend on WP-4's `is_broad_path` classifier + collision
-/// projection, which do not exist yet. Assertion 1 ships a **conservative**
-/// computable form (a trigger-bearing memory with no live route at all — its
-/// declared triggers all normalized away); [`static_gate_would_deny`] is the
-/// clearly-named predicate WP-4 tightens to also catch routable-but-degenerate
-/// sets. Assertion 2's classifier is a WP-4 stub that fails OPEN
-/// ([`would_block_degenerate`] returns `false`), so it never emits a false block.
+/// Both assertions are now backed by the real WP-4 predicates (still fail-open,
+/// advisory — this is a guardrail, never a gate). Assertion 1
+/// ([`static_gate_would_deny`]) unions the sound conservative arm (a
+/// trigger-bearing memory that routes nowhere) with the real two-arm static gate
+/// ([`crate::guard::static_gate_denies`]) over the declared trigger set. Assertion
+/// 2 ([`would_block_degenerate`]) runs the real collision projection
+/// ([`crate::projection::project`]) and checks the BLOCK-degenerate verdict,
+/// excluding the memory's own rows so the breadth mirrors the new-file verdict the
+/// write guard would render.
 pub fn drift_guardrail(memories: &[MemoryFacts], index: &Index) -> DriftReport {
     let mut advisories = Vec::new();
     let routed = index.routed_memory_ids();
@@ -578,8 +580,9 @@ pub fn drift_guardrail(memories: &[MemoryFacts], index: &Index) -> DriftReport {
     for m in memories {
         if is_trigger_bearing(&m.fm) && static_gate_would_deny(m, index, &routed) {
             advisories.push(format!(
-                "drift[static-gate]: trigger-bearing memory `{}` has no live route \
-                 (its declared triggers all normalize away) — would be denied by the static gate",
+                "drift[static-gate]: trigger-bearing memory `{}` has a degenerate declared \
+                 trigger set (routes nowhere, or only generic commands / broad paths with no live \
+                 lever) — would be denied by the static gate",
                 m.id
             ));
         }
@@ -617,25 +620,40 @@ fn is_trigger_bearing(fm: &Frontmatter) -> bool {
     })
 }
 
-/// Would the static degenerate gate deny this memory's trigger set today?
+/// Would the static degenerate gate deny this memory's trigger set today? The union
+/// of two sound arms:
+/// 1. the conservative arm — a memory with declared triggers but **no live route in
+///    the index** (every declared trigger normalized away or was excluded, so it
+///    routes nowhere); and
+/// 2. the real static gate ([`crate::guard::static_gate_denies`]) over the declared
+///    trigger set — flagging routable-but-degenerate sets (only broad paths via
+///    `is_broad_path` §3.x, or only generic commands via `GENERIC_VERBS`) with no
+///    narrowing lever, exactly as the write guard would.
 ///
-/// CONSERVATIVE computable form pending WP-4: a memory with declared triggers but
-/// **no live route in the index** — every declared trigger normalized away or was
-/// excluded, so it routes nowhere. WP-4 (P9 static gate) tightens this to also
-/// flag routable-but-degenerate sets (only broad paths via `is_broad_path` §3.x,
-/// or only generic commands via the GENERIC_VERBS stop-list) with no narrowing
-/// lever. The two arms WP-4 adds are a superset of this one; this arm is already
-/// sound.
-fn static_gate_would_deny(m: &MemoryFacts, _index: &Index, routed: &BTreeSet<String>) -> bool {
-    !routed.contains(&m.id)
+/// Advisory-only (§11): this never blocks a rebuild.
+fn static_gate_would_deny(m: &MemoryFacts, index: &Index, routed: &BTreeSet<String>) -> bool {
+    if !routed.contains(&m.id) {
+        return true; // routes nowhere — the sound conservative arm
+    }
+    m.fm.metadata
+        .triggers
+        .as_ref()
+        .is_some_and(|t| crate::guard::static_gate_denies(t, index))
 }
 
-/// WP-4 STUB — fails OPEN. The BLOCK-degenerate classifier (P10 collision
-/// projection: strict co-fire breadth > floor AND empty `live_levers`) needs
-/// `is_broad_path` + the projection walk, which land in WP-4. Returning `false`
-/// emits no advisory, never a false block. WP-4 replaces this body.
-fn would_block_degenerate(_m: &MemoryFacts, _index: &Index) -> bool {
-    false
+/// Would this memory be BLOCK-degenerate under the current collision verdict (§7)?
+/// Runs the real projection ([`crate::projection::project`]) over the memory's
+/// declared trigger set and checks the strict-`>`-floor + empty-live-levers verdict,
+/// **excluding the memory's own rows** (it is already in the index at rebuild time)
+/// so the breadth mirrors the new-file verdict the write guard would render.
+/// Advisory-only (§11): never a block.
+fn would_block_degenerate(m: &MemoryFacts, index: &Index) -> bool {
+    let Some(triggers) = m.fm.metadata.triggers.as_ref() else {
+        return false; // no declared trigger set → nothing to project
+    };
+    let proj = crate::projection::project(triggers, index);
+    let breadth = proj.collisions.iter().filter(|id| **id != m.id).count();
+    breadth > crate::projection::COLLISION_GUIDE_FLOOR && proj.live_levers.is_empty()
 }
 
 // =============================================================================

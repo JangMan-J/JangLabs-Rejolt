@@ -60,8 +60,8 @@ never closes it — the observation is the evidence):
 | WP-1 | P2, P3 | `c07dcd6` | 21 fns / 39 fixtures | Parser + grammar loader; 6 verify defects fixed & locked before commit |
 | WP-2 | P4, P5 | `2bf5a74` | 51 (+30) | Flat index + one walk + rebuild + drift; 5 verify defects fixed (byPath `**`, line-safety) |
 | WP-2b | P11 | `2e0d8fb` | 70 (+19) | Marks + telemetry; 5 verify defects fixed (atomic append, injective marks, correlation gating) |
-| WP-3 | P7, P6 | `see log` | 100 (+30) | Host-event parser + recall; 3 verify defects fixed (generic-verb shadow, web-keyword tier, is_full_write gate) |
-| WP-4 | P9, P10 | _pending_ | | |
+| WP-3 | P7, P6 | `5cb8433` | 100 (+30) | Host-event parser + recall; 3 verify defects fixed (generic-verb shadow, web-keyword tier, is_full_write gate) |
+| WP-4 | P9, P10 | `see log` | 132 (+32) | Write guard (fail-closed boundary) + projection + is_broad_path; 3 verify defects fixed (false-deny) |
 | WP-7 | P13, P14, P15 | _pending_ | | |
 | WP-5 | P8 | _pending_ | | |
 | WP-6 | P12 | _pending_ | | |
@@ -105,6 +105,11 @@ _none yet_
   2. web keywords over-tiered into byArg/medium (MAJOR): the tiebreaker routes web/tag-kind tokens through bySynonym/weak only (`kind=="tag"` never consults byArg) — the reseed let one `WebSearch{query}` clear the ≥2 gate synapse keeps silent. Fixed: `web_content` → synonyms bucket only; Bash args keep the args+synonyms dual-lookup.
   3. `is_full_write` un-gated by tool (minor): a crafted Edit/MultiEdit carrying a `content` key flipped to a guardable full write → a fail-open→fail-closed (N13/D6) inversion risk for WP-4. Fixed: `is_full_write = tool_name=="Write" && content non-empty`.
   Confirmed sound: index-only/no-rebuild/no-body-load (N11/D1), silence emits nothing (D19), Bash tokenizer + §5.x lexical canonicalization (checked vs real `realpath -sm`), A5b fail-open (no panic on hostile payloads), tier map/penalties/§10 tunables. WebSearch/WebFetch/context7 routing on tool *inputs* is D3-grounded (synapse tiebreaker). **Directive to WP-4:** `is_full_write`/`proposed_content` are Write-only now — still independently confirm tool identity before denying.
+- **WP-4** (4 Opus lenses vs D6/D8/§6/§7/§3.x/§1 + the synapse tiebreaker; the projection/verdict and dedup/A6/negative-contract lenses found ZERO defects): 0 blockers, 1 major, 2 minors — all fixed & locked before commit:
+  1. `is_new` from RAW `target_path.exists()` while grammar/placement use `engine_realpath` (MAJOR, false-deny, #1 mode): a consolidation via a non-canonical path (`~/store/x.md`, cwd-relative) misclassified as NEW → ran the new-file-only dedup/collision tiers → could BLOCK-deny a legitimate consolidation. Fixed: `is_new`/`memory_id` from `engine_realpath(target_path)`. Lock proven to have teeth (revert → fail).
+  2. A6 diff false-deny on an unparseable baseline (minor): a broken-TOML current + a parse-fixing proposed was denied. Fixed: unparseable current (coarse `{parse}` sig) → allow, like file-absent bootstrap.
+  3. §1 live-lever DUPLICATED not shared (minor/high): `static_gate` re-implemented liveness inline (byte-identical, but a one-sided edit would diverge the two fail-closed tiers). Fixed: `static_gate` calls `projection::live_levers`; equivalence test added.
+  Confirmed sound (zero defects): `is_broad_path` exact on all 25 §3.x examples + adversarial boundaries; projection liveness = key-membership never co-fire counts (retired signal-inversion absent); strict `>` floor; dedup formula/stopwords parity; A6 diff over the full error set; drift stubs fail-open; N1 one-matcher; exactly 6 enumerated deny sites. **Directive to WP-7:** wire `GuardConfig.roots.box_root` + `grammar_path` from `config.toml`.
 
 ## Spec-friction reports from builders (G5)
 
