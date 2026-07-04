@@ -62,7 +62,7 @@ never closes it — the observation is the evidence):
 | WP-2b | P11 | `2e0d8fb` | 70 (+19) | Marks + telemetry; 5 verify defects fixed (atomic append, injective marks, correlation gating) |
 | WP-3 | P7, P6 | `5cb8433` | 100 (+30) | Host-event parser + recall; 3 verify defects fixed (generic-verb shadow, web-keyword tier, is_full_write gate) |
 | WP-4 | P9, P10 | `6ded6c9` | 132 (+32) | Write guard (fail-closed boundary) + projection + is_broad_path; 3 verify defects fixed (false-deny) |
-| WP-7 | P13, P14, P15 | `see log` | 182 (+50) | Config + CLI surface + bootstrap + bench/calibration; 5 verify defects fixed (bootstrap fail-open, A4 slack) |
+| WP-7 | P13, P14, P15 | `2ca2929` | 182 (+50) | Config + CLI surface + bootstrap + bench/calibration; 5 verify defects fixed (bootstrap fail-open, A4 slack) |
 | WP-5 | P8 | _pending_ | | |
 | WP-6 | P12 | _pending_ | | |
 | WP-8 | P16, P17, P18 | _pending_ | | |
