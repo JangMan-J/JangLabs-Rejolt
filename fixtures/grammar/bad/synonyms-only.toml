@@ -1,0 +1,6 @@
+grammar-version = 1
+
+[domain.weak]
+gloss = "weak"
+placement = "either"
+synonyms = ["foo"]

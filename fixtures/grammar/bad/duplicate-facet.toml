@@ -1,0 +1,11 @@
+grammar-version = 1
+
+[domain.shared]
+gloss = "d"
+placement = "box"
+commands = ["x"]
+
+[tool.shared]
+gloss = "t"
+placement = "box"
+commands = ["y"]

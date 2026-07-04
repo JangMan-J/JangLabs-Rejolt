@@ -29,3 +29,20 @@ fixtures/<area>/bad/    # non-conformant inputs — the check MUST reject each
   ("fixture file is non-empty") accepts the good and rejects the bad, so its
   verdict counts. See `tests/conformance_selftest.rs`. Do not repurpose this
   area — later packets add their own.
+- `frontmatter/` — WP-1 (P2). The bespoke constrained-YAML dialect (D21, A3).
+  `good/` are in-subset memory frontmatters (the §3 worked example, flow/block
+  sequences, quoted scalars, ranking fields, a minimal one); `bad/` is one
+  fixture per Appendix B2 reject rule (anchors, aliases, type tags,
+  multi-document, block scalars, flow mappings, multiline strings, tab
+  indentation, duplicate keys, top-level `triggers:`, unknown keys) plus the
+  D21 schema rejects (missing/empty/invalid tags, missing fences). The check
+  `frontmatter-parse-valid` accepts iff parse + schema validation succeeds.
+  Bads double as the vector-corpus oracle (each maps to its named error). See
+  `tests/frontmatter.rs`.
+- `grammar/` — WP-1 (P3). The serde-typed `grammar.toml` loader (D22, D23, D3,
+  A6). `good/` = a valid multi-facet grammar and the empty seed (version line
+  alone); `bad/` = the RB5 corpus (fourth facet table, duplicate-facet tag,
+  synonyms-only tag, bad/missing `grammar-version`, bad `placement`, unknown
+  entry field), each rejected as an exit-2 config/taxonomy error. The check
+  `grammar-load-valid` accepts iff parse + validate succeeds. See
+  `tests/grammar.rs`.

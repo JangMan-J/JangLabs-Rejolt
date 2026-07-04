@@ -1,0 +1,11 @@
+grammar-version = 1
+
+[domain.a]
+gloss = "a"
+placement = "box"
+commands = ["x"]
+
+[platform.b]
+gloss = "b"
+placement = "box"
+commands = ["y"]

@@ -13,6 +13,9 @@
 
 pub mod cli;
 pub mod conformance;
+pub mod frontmatter;
+pub mod grammar;
+pub mod tag;
 
 /// The crate version, sourced from Cargo at compile time. Surfaced by
 /// `rejolt --version` and asserted against by the CLI smoke test so the binary

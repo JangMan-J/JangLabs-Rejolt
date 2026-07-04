@@ -56,8 +56,8 @@ never closes it — the observation is the evidence):
 
 | WP | P-items | Commit | Tests (cum.) | Notes |
 |----|---------|--------|--------------|-------|
-| WP-0 | P1 | _pending_ | | |
-| WP-1 | P2, P3 | _pending_ | | |
+| WP-0 | P1 | `f9616df` | 5 | Skeleton + G2 harness proven (rubber-stamp self-test) |
+| WP-1 | P2, P3 | `see log` | 21 fns / 39 fixtures | Parser + grammar loader; 6 verify defects fixed & locked before commit |
 | WP-2 | P4, P5 | _pending_ | | |
 | WP-2b | P11 | _pending_ | | |
 | WP-3 | P7, P6 | _pending_ | | |
@@ -75,6 +75,17 @@ _none yet_
 
 _none yet_
 
+## Adversarial verify passes (ultracode; before each packet commit)
+
+- **WP-1** (4 Opus lenses, read-only, over the uncommitted tree; all findings empirically confirmed vs PyYAML 6.0.3): 0 blockers, 3 majors (2 were the same false-deny, independently found by 2 lenses), 7 minors, 1 nit. Theme: the hand-rolled parser diverged from the named PyYAML `safe_load` oracle (A3/B2) on cases the goods-only differential never exercised. Fixed by the builder before commit:
+  1. mid-scalar `{`/`}` in a plain scalar → wrongly `FlowMapping` (false-deny, RB3): dropped the blanket contains-guard; a true flow map starts with `{` and is still caught.
+  2. inline ` #` comments absorbed into trigger values → reject space-then-`#` as out-of-subset (`c#` with no leading space still a literal).
+  3. `: ` in a plain scalar false-accepted (PyYAML errors) → reject unquoted `": "`.
+  4. unknown `\x`/`\u` double-quote escapes silently mangled → reject unknown escapes (keep `\" \\ \n \t \r`).
+  5. grammar `commands=[""]` false-accepts the D3 evidence guard → count only non-blank evidence; reject blank/control-char evidence + newlines in gloss (digest-injection).
+  6. nit: `DuplicateFacet.facets` sorted to match its doc.
+  Each fix locked into the differential/vector oracle by new good (braced) + bad (inline-comment / colon / bad-escape) fixtures. Confirmed sound and unchanged: metadata-key strictness, A6a fourth-table/dup-facet, version/placement enums, N10/N12, one hand-rolled parser, the differential comparison method.
+
 ## Spec-friction reports from builders (G5)
 
-_none yet_
+_none yet — WP-0, WP-1 raised no G4 spec contradictions (WP-1's builder notes were interpretation/under-spec points, not contradictions)_
