@@ -11,6 +11,8 @@
 //! harness. Real behavior lands in later packets, which add their own modules
 //! rather than filling stubs guessed here.
 
+pub mod bench;
+pub mod bootstrap;
 pub mod catalog;
 pub mod cli;
 pub mod config;
@@ -18,6 +20,7 @@ pub mod conformance;
 pub mod frontmatter;
 pub mod grammar;
 pub mod guard;
+pub mod hooks;
 pub mod index;
 pub mod normalize;
 pub mod path_class;

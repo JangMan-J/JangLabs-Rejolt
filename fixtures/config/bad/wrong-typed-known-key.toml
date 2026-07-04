@@ -1,0 +1,3 @@
+# A KNOWN key with the wrong type is a config/taxonomy error (exit 2) — NOT an
+# unknown-key warning. This is a known-BAD fixture: `load` must reject it.
+maxResults = "not-an-integer"

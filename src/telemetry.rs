@@ -310,6 +310,14 @@ impl Telemetry {
         &self.tel_path
     }
 
+    /// The config this primitive carries (D25 single source). Recall reads its
+    /// tier weights + confidence thresholds from here (WP-7), so the ranking
+    /// magnitudes flow in through the same injected [`Config`] as the telemetry
+    /// tunables — one source, no second hardcoded copy.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
     // ---- marks -----------------------------------------------------------
 
     /// Is a memory's dedup mark LIVE (mtime within `dedupe_ttl_seconds` of now)?

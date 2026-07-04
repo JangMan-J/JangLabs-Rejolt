@@ -42,6 +42,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::catalog::read_artifacts;
+use crate::config::Config;
 use crate::index::{Hit, WalkQuery, routing_key};
 use crate::normalize::{NormalizedOp, ToolOp, canonicalize_lexical, tokenize_bash};
 use crate::rebuild::{index_path, report_path};
@@ -49,29 +50,26 @@ use crate::telemetry::{FireMem, FireOutcome, FireRecord, Telemetry};
 use crate::tier::Tier;
 
 // =============================================================================
-// §10 tunables — forms frozen (§2), magnitudes are the §10 defaults
+// §10 tunables — forms frozen (§2), magnitudes from Config (WP-7) or const
 // =============================================================================
 //
-// These live as consts here because WP-2b's `Config` deliberately carries only the
-// three marks/telemetry tunables; WP-7 (plan P15) is the packet that lifts
-// `tierWeights` / `confidence*Threshold` into `Config` as config-overridable knobs.
-// Until then recall uses the frozen §10 defaults directly — the *form* (§2 invariant)
-// is what is frozen, and it lives in the gate/score functions below.
+// `tierWeights` and the confidence thresholds are lifted into [`Config`] (WP-7,
+// plan P15): recall reads them from `telemetry.config()` — the SAME injected
+// [`Config`] that carries the telemetry tunables — so there is one source, no
+// second hardcoded copy. The frozen §10 defaults live in `Config::default()`, so
+// behavior is unchanged when no `config.toml` overrides them. The score-penalty
+// *form* and the surface-gate *form* are §2 invariants (hardcoded) and stay const
+// below; only their magnitudes/counts were ever config-eligible (§10).
 
-/// `TIER_WEIGHTS` (§10): strong / medium / weak.
-const TIER_STRONG: i64 = 10;
-const TIER_MEDIUM: i64 = 6;
-const TIER_WEAK: i64 = 3;
-/// Score penalties (§5, hardcoded): `-5×stale`, `-2×min(declineCount, 3)`.
+/// Score penalties (§5, hardcoded form): `-5×stale`, `-2×min(declineCount, 3)`.
 const STALE_PENALTY: i64 = 5;
 const DECLINE_PENALTY_PER: i64 = 2;
 const DECLINE_CAP: i64 = 3;
-/// Confidence thresholds (§10): high ≥ 10, medium ≥ 6.
-const CONFIDENCE_HIGH: i64 = 10;
-const CONFIDENCE_MEDIUM: i64 = 6;
 /// Staleness horizon (§5): `lastReviewed` older than this many days is stale.
 const STALE_DAYS: i64 = 180;
-/// `maxResults` (§10): at most this many memories surface.
+/// `maxResults` (§10): at most this many memories surface. (§10 secondary; the
+/// magnitude is carried in [`Config`] too, and read there by the CLI/bench — recall
+/// keeps the const cap; the two share the frozen default 3.)
 const MAX_RESULTS: usize = 3;
 
 /// The GENERIC_VERBS stop-list (§5, D5): generic command basenames that do NOT
@@ -211,9 +209,11 @@ pub fn recall(op: &NormalizedOp, store_dir: &Path, telemetry: &Telemetry) -> Rec
         return RecallOutcome::Silence;
     }
 
-    // 4 + 5. Gate + score per memory.
+    // 4 + 5. Gate + score per memory. Ranking magnitudes (tier weights + confidence
+    // thresholds) come from the injected config (WP-7) — one source, frozen defaults.
+    let cfg = telemetry.config();
     let today = today_days();
-    let mut candidates = gate_and_score(&hits, today);
+    let mut candidates = gate_and_score(&hits, today, cfg);
     if candidates.is_empty() {
         return RecallOutcome::Silence;
     }
@@ -232,7 +232,7 @@ pub fn recall(op: &NormalizedOp, store_dir: &Path, telemetry: &Telemetry) -> Rec
     });
     candidates.truncate(MAX_RESULTS);
 
-    let confidence = confidence_label(candidates[0].score);
+    let confidence = confidence_label(candidates[0].score, cfg);
     let text = render_advisory(&confidence, &candidates);
 
     // 8. Fire telemetry — the ONE fire-logging path (D25/A7). The primitive derives
@@ -442,8 +442,9 @@ struct MemAccum {
 }
 
 /// Group the walk hits by memory, apply the surface gate, and score the survivors.
-/// Returns the firing memories (unranked).
-fn gate_and_score(hits: &[Hit<'_>], today_days: i64) -> Vec<SurfacedMemory> {
+/// Returns the firing memories (unranked). `cfg` supplies the tier weights +
+/// confidence thresholds (§10, WP-7).
+fn gate_and_score(hits: &[Hit<'_>], today_days: i64, cfg: &Config) -> Vec<SurfacedMemory> {
     // Grouping preserves the walk's deterministic hit order via insertion order,
     // and `BTreeMap` keeps the memory set itself deterministic.
     let mut by_mem: BTreeMap<String, MemAccum> = BTreeMap::new();
@@ -495,6 +496,7 @@ fn gate_and_score(hits: &[Hit<'_>], today_days: i64) -> Vec<SurfacedMemory> {
             acc.decline_count,
             &acc.last_reviewed,
             today_days,
+            cfg,
         );
         let citations = acc
             .tuples
@@ -510,7 +512,7 @@ fn gate_and_score(hits: &[Hit<'_>], today_days: i64) -> Vec<SurfacedMemory> {
             path: acc.path,
             snippet: acc.snippet,
             score,
-            confidence: confidence_label(score),
+            confidence: confidence_label(score, cfg),
             citations,
         });
     }
@@ -527,14 +529,15 @@ fn meets_surface_gate(tuples: &[FiringTuple]) -> bool {
 }
 
 /// Score a memory (§5/§10): tier weights summed over distinct tuples, minus
-/// `5×stale` and `2×min(declineCount, 3)`.
+/// `5×stale` and `2×min(declineCount, 3)`. Tier weights come from `cfg` (§10, WP-7).
 fn score_tuples(
     tuples: &[FiringTuple],
     decline_count: i64,
     last_reviewed: &str,
     today_days: i64,
+    cfg: &Config,
 ) -> i64 {
-    let mut score: i64 = tuples.iter().map(|t| tier_weight(t.tier)).sum();
+    let mut score: i64 = tuples.iter().map(|t| tier_weight(t.tier, cfg)).sum();
     if is_stale(last_reviewed, today_days) {
         score -= STALE_PENALTY;
     }
@@ -543,20 +546,21 @@ fn score_tuples(
     score
 }
 
-/// The §10 tier weight for a tier.
-fn tier_weight(tier: Tier) -> i64 {
+/// The §10 tier weight for a tier, read from `cfg.tier_weights` (WP-7).
+fn tier_weight(tier: Tier, cfg: &Config) -> i64 {
     match tier {
-        Tier::Strong => TIER_STRONG,
-        Tier::Medium => TIER_MEDIUM,
-        Tier::Weak => TIER_WEAK,
+        Tier::Strong => cfg.tier_weights.strong,
+        Tier::Medium => cfg.tier_weights.medium,
+        Tier::Weak => cfg.tier_weights.weak,
     }
 }
 
-/// Map a score to a confidence label (§10): high ≥ 10, medium ≥ 6, else low.
-fn confidence_label(score: i64) -> String {
-    if score >= CONFIDENCE_HIGH {
+/// Map a score to a confidence label (§10), thresholds from `cfg` (WP-7): high ≥
+/// `confidenceHighThreshold`, medium ≥ `confidenceMediumThreshold`, else low.
+fn confidence_label(score: i64, cfg: &Config) -> String {
+    if score >= cfg.confidence_high_threshold {
         "high".into()
-    } else if score >= CONFIDENCE_MEDIUM {
+    } else if score >= cfg.confidence_medium_threshold {
         "medium".into()
     } else {
         "low".into()
@@ -741,6 +745,7 @@ mod tests {
 
     #[test]
     fn score_tuples_forms_are_frozen() {
+        let cfg = Config::default();
         // strong(10) + medium(6) = 16, no penalties.
         assert_eq!(
             score_tuples(
@@ -751,12 +756,13 @@ mod tests {
                 0,
                 "",
                 20_000,
+                &cfg,
             ),
             16
         );
         // -2×min(declineCount,3): declineCount 5 clamps to 3 → -6.
         assert_eq!(
-            score_tuples(&[tuple("command", Tier::Strong, "rg")], 5, "", 20_000),
+            score_tuples(&[tuple("command", Tier::Strong, "rg")], 5, "", 20_000, &cfg),
             10 - 6
         );
         // -5×stale: a review > 180 days before today.
@@ -766,7 +772,8 @@ mod tests {
                 &[tuple("command", Tier::Strong, "rg")],
                 0,
                 "2020-01-01",
-                today
+                today,
+                &cfg,
             ),
             10 - 5,
         );
@@ -776,7 +783,8 @@ mod tests {
                 &[tuple("command", Tier::Strong, "rg")],
                 0,
                 "2026-06-01",
-                today
+                today,
+                &cfg,
             ),
             10,
         );
@@ -784,9 +792,27 @@ mod tests {
 
     #[test]
     fn confidence_thresholds() {
-        assert_eq!(confidence_label(10), "high");
-        assert_eq!(confidence_label(6), "medium");
-        assert_eq!(confidence_label(5), "low");
+        let cfg = Config::default();
+        assert_eq!(confidence_label(10, &cfg), "high");
+        assert_eq!(confidence_label(6, &cfg), "medium");
+        assert_eq!(confidence_label(5, &cfg), "low");
+    }
+
+    #[test]
+    fn tier_weights_source_from_config() {
+        // WP-7: an overridden tierWeights config changes the score magnitude, while
+        // the frozen default reproduces the §10 values.
+        assert_eq!(tier_weight(Tier::Strong, &Config::default()), 10);
+        let cfg = Config {
+            tier_weights: crate::config::TierWeights {
+                strong: 20,
+                medium: 12,
+                weak: 6,
+            },
+            ..Config::default()
+        };
+        assert_eq!(tier_weight(Tier::Strong, &cfg), 20);
+        assert_eq!(tier_weight(Tier::Medium, &cfg), 12);
     }
 
     #[test]

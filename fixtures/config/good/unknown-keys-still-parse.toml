@@ -1,0 +1,9 @@
+# Unknown keys must WARN, never fail (R7) — so this file still LOADS OK (a
+# known-GOOD fixture), and the unknown keys are surfaced as advisory warnings.
+maxResults = 5
+bogusTopLevelKey = true
+whatIsThis = "ignored, warned about, never fatal"
+
+[tierWeights]
+strong = 11
+mysteryNested = 99

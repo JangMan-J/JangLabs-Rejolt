@@ -61,8 +61,8 @@ never closes it — the observation is the evidence):
 | WP-2 | P4, P5 | `2bf5a74` | 51 (+30) | Flat index + one walk + rebuild + drift; 5 verify defects fixed (byPath `**`, line-safety) |
 | WP-2b | P11 | `2e0d8fb` | 70 (+19) | Marks + telemetry; 5 verify defects fixed (atomic append, injective marks, correlation gating) |
 | WP-3 | P7, P6 | `5cb8433` | 100 (+30) | Host-event parser + recall; 3 verify defects fixed (generic-verb shadow, web-keyword tier, is_full_write gate) |
-| WP-4 | P9, P10 | `see log` | 132 (+32) | Write guard (fail-closed boundary) + projection + is_broad_path; 3 verify defects fixed (false-deny) |
-| WP-7 | P13, P14, P15 | _pending_ | | |
+| WP-4 | P9, P10 | `6ded6c9` | 132 (+32) | Write guard (fail-closed boundary) + projection + is_broad_path; 3 verify defects fixed (false-deny) |
+| WP-7 | P13, P14, P15 | `see log` | 182 (+50) | Config + CLI surface + bootstrap + bench/calibration; 5 verify defects fixed (bootstrap fail-open, A4 slack) |
 | WP-5 | P8 | _pending_ | | |
 | WP-6 | P12 | _pending_ | | |
 | WP-8 | P16, P17, P18 | _pending_ | | |
@@ -110,6 +110,11 @@ _none yet_
   2. A6 diff false-deny on an unparseable baseline (minor): a broken-TOML current + a parse-fixing proposed was denied. Fixed: unparseable current (coarse `{parse}` sig) → allow, like file-absent bootstrap.
   3. §1 live-lever DUPLICATED not shared (minor/high): `static_gate` re-implemented liveness inline (byte-identical, but a one-sided edit would diverge the two fail-closed tiers). Fixed: `static_gate` calls `projection::live_levers`; equivalence test added.
   Confirmed sound (zero defects): `is_broad_path` exact on all 25 §3.x examples + adversarial boundaries; projection liveness = key-membership never co-fire counts (retired signal-inversion absent); strict `>` floor; dedup formula/stopwords parity; A6 diff over the full error set; drift stubs fail-open; N1 one-matcher; exactly 6 enumerated deny sites. **Directive to WP-7:** wire `GuardConfig.roots.box_root` + `grammar_path` from `config.toml`.
+- **WP-7** (3 Opus lenses vs Appendix D / D13-N7 / A4; CLI+config lens clean): 0 blockers, 2 majors, 3 minors — all fixed & locked before commit:
+  1. bootstrap fail-open violation (MAJOR): the structural self-test probes scaffolded under `std::env::temp_dir()`, so an unwritable `/tmp` hard-failed a correctly-seeded bootstrap (exit 1). Fixed: probes are tri-state (`ran-ok`/`ran-broke`/`skipped`), scaffold inside the freshly-seeded store, and only an observed break gates exit 1 (A7/A5 fail-open).
+  2. A4(c) slack floor measured-but-unapplied (MAJOR): `regression_ceiling` used only the §9 static `max(25%,15ms)`, ignoring the stored calibrated jitter → a noisy box could block on an in-jitter run (the drift A4 exists to retire). Fixed: `ceiling = baseline + max(25%, 15ms, ceiling_slack_ms)`.
+  3–5. minors: `dedup_backstop_threshold` config key spelling (→ `#[serde(rename = "DEDUP_BACKSTOP_THRESHOLD")]`); `BUDGET_MS` dead-knob doc corrected (superseded by A4 budget); `--update-baseline` no longer synthesizes a design budget from the real store (A4(a) — inert until `--calibrate`).
+  Confirmed sound: D13/N7 (engine writes no host policy; `--print-hooks` to stdout; `~/.claude` never created), bootstrap idempotence + never-overwrite, empty seed = version line alone, config unknown-key WARN + hook fail-open, env fingerprint kernel-excluded (RB10), LOUD degrade, NOBASELINE interim, no fabricated numbers. **Directive to WP-5:** the hook stub `eprintln!` must become a silent allow (D12 quiet-on-pass).
 
 ## Spec-friction reports from builders (G5)
 
