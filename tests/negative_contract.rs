@@ -11,12 +11,16 @@
 //! oracle in `tests/frontmatter.rs` (A3/B2) — test-only, and N10 explicitly
 //! says "untouched" by it ("no python … on any ENGINE path").
 //!
-//! G4 note (N14): this sweep found a live contradiction between committed
-//! code (`src/bench.rs::regression_ceiling`) and D9/D26/A4's calibration
-//! protocol. It is NOT fixed here — `src/bench.rs` is outside this packet's
-//! disjoint file scope (this packet writes only this file and the sweep-sheet
-//! report). See the `n14_flagged_g4_…` test below and the sweep sheet's "N14
-//! finding" section for the full writeup handed to `/vet`.
+//! N14 fix note: an earlier sweep pass found a live contradiction between
+//! committed code (`src/bench.rs::regression_ceiling`) and D9/D26/A4's
+//! calibration protocol — the ceiling folded the CORE-SPEC §9 static
+//! `max(25%, 15 ms)` slack in UNDER the A4-calibrated slack floor, so the
+//! static floor could swallow a real structural regression at this reseed's
+//! sub-ms recall scale. That was flagged G4 and fixed at integration:
+//! `regression_ceiling` now returns `baseline_p95 + slack_floor` alone (no
+//! static term), and the REGRESSED gate is inert on an uncalibrated baseline.
+//! See `n14_regression_ceiling_uses_only_the_calibrated_slack_no_static_floor`
+//! below and the sweep sheet's "N14 finding" section for the full writeup.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -27,10 +31,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use clap::Parser;
 use serde_json::json;
 
-use rejolt::bench::{
-    self, Baseline, CEILING_MIN_SLACK_MS, CEILING_REL_SLACK, EnvFingerprint,
-    Verdict as BenchVerdict, regression_ceiling,
-};
+use rejolt::bench::{self, Baseline, EnvFingerprint, Verdict as BenchVerdict, regression_ceiling};
 use rejolt::bootstrap;
 use rejolt::catalog::{CatalogReport, IndexHeader, RoutabilityReport};
 use rejolt::cli::Cli;
@@ -823,28 +824,13 @@ fn n14_gate_is_measure_only_until_a_baseline_is_committed() {
 }
 
 #[test]
-fn n14_flagged_g4_the_ceiling_still_bakes_in_the_superseded_static_slack() {
+fn n14_regression_ceiling_uses_only_the_calibrated_slack_no_static_floor() {
     // D9 states the CORE-SPEC §9 formula `max(25%, 15 ms)` is SUPERSEDED by the
     // D26/A4 calibration protocol, and A4(c) defines the REPLACEMENT slack
     // floor as EXACTLY `max(3σ, min→max band)` over ≥5 runs of ≥100 samples —
-    // no static minimum anywhere in A4's wording. But
-    // `bench::regression_ceiling` still folds `CEILING_REL_SLACK`(0.25) and
-    // `CEILING_MIN_SLACK_MS`(15.0) into the ceiling as an UNCONDITIONAL floor
-    // UNDER the calibrated slack, so a real, tiny, correctly-calibrated slack
-    // can never narrow the ceiling below `baseline + 15 ms`. At the
-    // D16-measured recall scale (0.7–2.4 ms!) this static 15 ms floor swallows
-    // any realistic structural regression — the exact failure D26's own
-    // rationale (the old ~100ms-scale regime does not transplant to <10 ms)
-    // was written to prevent.
-    //
-    // This test PINS today's actual (contradiction-bearing) behavior — it is
-    // NOT an endorsement of it. Flagged N14/G4 in the sweep sheet for /vet:
-    // either (a) `regression_ceiling` should drop the static floor so the
-    // ceiling is purely calibration-derived per A4(c), or (b) D9/A4 need an
-    // amendment explicitly re-admitting a static defense-in-depth floor. Not
-    // fixed here — `src/bench.rs` is outside this packet's file scope (this
-    // packet writes only `tests/negative_contract.rs` and the sweep-sheet
-    // report).
+    // no static minimum anywhere in A4's wording. `bench::regression_ceiling`
+    // now implements that literally: `baseline_p95 + slack_floor`, no static
+    // relative or absolute term folded in underneath.
     let baseline = Baseline {
         p95_ms: 1.0,             // D16-scale real recall latency
         design_budget_ms: 100.0, // wide enough that WARN cannot mask this either
@@ -852,30 +838,35 @@ fn n14_flagged_g4_the_ceiling_still_bakes_in_the_superseded_static_slack() {
         env: EnvFingerprint::detect(),
     };
     // A 10x structural slowdown over baseline (1.0 ms -> 10.0 ms) — exactly the
-    // shape of regression the REGRESSED verdict exists to catch.
+    // shape of regression the REGRESSED verdict exists to catch — now actually
+    // REGRESSES, instead of being swallowed by a superseded static 15 ms floor.
     let (verdict, _lines) = bench::verdict_of(10.0, Some(&baseline), &baseline.env);
     assert_eq!(
         verdict,
-        BenchVerdict::Pass,
-        "G4/N14 CONTRADICTION (see sweep sheet): a 10x recall slowdown (1.0ms -> 10.0ms baseline, \
-         calibrated slack 0.3ms) is swallowed by the static 15ms/25% floor (ceiling = 1.0 + \
-         max(0.25, 15.0, 0.3) = 16.0ms > 10.0ms), so REGRESSED never fires and it isn't even WARN. \
-         If this assertion ever starts failing with a DIFFERENT verdict, the static floor was \
-         removed from `regression_ceiling` — that is PROGRESS: update this test (and the sweep \
-         sheet's N14 row) to confirm N14 now holds cleanly; it is not a regression to chase down."
+        BenchVerdict::Regressed,
+        "N14/A4(c): a 10x recall slowdown (1.0ms -> 10.0ms baseline, calibrated slack 0.3ms) must \
+         REGRESS now that the ceiling is baseline + calibrated slack alone (ceiling = 1.3ms < \
+         10.0ms measured)."
     );
-    // Pin the arithmetic itself so the mechanism (not just the outcome) is legible:
-    // the ceiling equals baseline + the STATIC 15ms floor, not baseline + the
-    // calibrated 0.3ms slack — confirming CEILING_MIN_SLACK_MS (not
-    // CEILING_REL_SLACK, since 0.25*1.0 << 15.0 here) is what set it.
+    // Pin the arithmetic itself: the ceiling is exactly baseline + the calibrated
+    // slack — no static term participates at all.
     let ceiling = regression_ceiling(baseline.p95_ms, baseline.ceiling_slack_ms);
     assert!(
-        (ceiling - (baseline.p95_ms + CEILING_MIN_SLACK_MS)).abs() < 1e-9,
-        "the static CEILING_MIN_SLACK_MS({CEILING_MIN_SLACK_MS}ms) floor — not the calibrated \
-         slack — is what set the ceiling here: ceiling={ceiling}"
+        (ceiling - (baseline.p95_ms + baseline.ceiling_slack_ms)).abs() < 1e-9,
+        "the ceiling must be exactly baseline + calibrated slack, no static floor: ceiling={ceiling}"
     );
-    assert!(
-        CEILING_REL_SLACK * baseline.p95_ms < CEILING_MIN_SLACK_MS,
-        "sanity: at this baseline scale the relative slack is dwarfed by the static ms floor"
+
+    // And the flip side of D9/A4(c): an UNCALIBRATED baseline (no jitter floor —
+    // ceiling_slack_ms == 0.0) has nothing valid to gate on, so REGRESSED must be
+    // inert (measure-only) no matter how large the measured p95 is.
+    let uncalibrated = Baseline {
+        ceiling_slack_ms: 0.0,
+        ..baseline
+    };
+    let (verdict, _lines) = bench::verdict_of(10_000.0, Some(&uncalibrated), &uncalibrated.env);
+    assert_ne!(
+        verdict,
+        BenchVerdict::Regressed,
+        "N14/A4(c): an uncalibrated baseline (ceiling_slack_ms == 0.0) must never REGRESS-block"
     );
 }

@@ -11,13 +11,18 @@
 //!
 //! - **PASS** — `p95 ≤ ceiling` AND within the design budget.
 //! - **WARN** — over the design budget but `≤ ceiling`; advisory, exit 0.
-//! - **REGRESSED** — `p95 > ceiling`; a structural slowdown, exit 1 (blocks).
+//! - **REGRESSED** — a CALIBRATED baseline (`ceiling_slack_ms > 0.0`) AND
+//!   `p95 > ceiling`; a structural slowdown, exit 1 (blocks). An uncalibrated
+//!   baseline has no valid jitter floor to gate on, so this check is inert
+//!   (measure-only) until `--calibrate` runs.
 //! - **NOBASELINE** — no baseline file; measure-only, exit 0. This is also the
 //!   interim state until a baseline is committed — so it needs no special case.
 //!
-//! `ceiling = baseline_p95 + max(25%, 15 ms)` (§9). The two "55 ms" are never
-//! conflated: `BUDGET_MS = 55` is the live-advisory design budget (over it ⇒ WARN,
-//! exit 0), never a hard cliff.
+//! `ceiling = baseline_p95 + slack_floor` (D9/A4(c)). D9 supersedes CORE-SPEC
+//! §9's static `max(25%, 15 ms)` slack; A4(c) defines the replacement as the
+//! calibrated jitter floor ALONE — no static relative or absolute term. The two
+//! "55 ms" are never conflated: `BUDGET_MS = 55` is the live-advisory design
+//! budget (over it ⇒ WARN, exit 0), never a hard cliff.
 //!
 //! ## Calibration (A4 — the derivation is SPEC, the numbers are OUTPUTS)
 //!
@@ -59,10 +64,6 @@ pub const CALIBRATION_MIN_RUNS: usize = 5;
 pub const CALIBRATION_MIN_SAMPLES: usize = 100;
 /// The default `--samples` for a plain `bench` run.
 pub const DEFAULT_SAMPLES: usize = 200;
-/// The §9 hard-minimum ceiling slack (the `15 ms` in `max(25%, 15 ms)`).
-pub const CEILING_MIN_SLACK_MS: f64 = 15.0;
-/// The §9 relative ceiling slack (the `25%` in `max(25%, 15 ms)`).
-pub const CEILING_REL_SLACK: f64 = 0.25;
 /// The baseline file (infra: underscore-prefixed so the store scan skips it).
 pub const BASELINE_FILENAME: &str = "_recall_p95_baseline.toml";
 
@@ -264,17 +265,20 @@ pub fn ceiling_slack_floor(run_p95s: &[f64]) -> f64 {
     three_sigma.max(max - min)
 }
 
-/// The §9 regression ceiling, widened by the A4(c) calibrated slack floor:
-/// `baseline_p95 + max(25%·baseline, 15 ms, slack_floor)`. `slack_floor` is the
-/// baseline's `ceiling_slack_ms` (`max(3σ, min→max band)` at calibration) — so on a
-/// noisy box whose measured jitter exceeds the §9 static 15 ms, an in-jitter run
-/// does NOT trip a blocking REGRESSED (the permanent-red drift A4 retires). A
-/// baseline with no calibrated slack (`0.0`) reduces to the plain §9 form.
+/// The regression ceiling (D9/A4(c)): `baseline_p95 + slack_floor`, where
+/// `slack_floor` is the baseline's `ceiling_slack_ms` — the A4(c)-calibrated
+/// `max(3σ, min→max band)` over the calibration runs. D9 explicitly
+/// **supersedes** CORE-SPEC §9's static `max(25%, 15 ms)` slack ("all
+/// magnitudes deferred to the D26 calibration protocol"), and A4(c) defines the
+/// replacement as the calibrated jitter floor ALONE — no static relative or
+/// absolute term. At this reseed's sub-millisecond recall scale (D16: 0.7–2.4
+/// ms) a static 15 ms term would swamp any realistic structural regression, so
+/// it must not be transplanted here (A4's own rationale). A baseline with no
+/// calibrated slack (`0.0`, e.g. an uncalibrated `--update-baseline`) reduces
+/// this to a pure pass-through of `baseline_p95` — see [`verdict_of`], which
+/// treats that case as measure-only rather than gating on it.
 pub fn regression_ceiling(baseline_p95: f64, slack_floor: f64) -> f64 {
-    let slack = (CEILING_REL_SLACK * baseline_p95)
-        .max(CEILING_MIN_SLACK_MS)
-        .max(slack_floor);
-    baseline_p95 + slack
+    baseline_p95 + slack_floor
 }
 
 /// The R7 `_TEL_MAX` resize recommendation: the smallest `_TEL_MAX` (bytes) such
@@ -360,15 +364,15 @@ pub fn verdict_of(
             )],
         );
     }
-    // FIX 2 (A4c): the ceiling absorbs the calibrated slack floor, not just §9's
-    // static max(25%, 15 ms).
+    // FIX 2 (A4c)/D9: the ceiling is the calibrated slack floor ALONE — the
+    // §9 static max(25%, 15 ms) is superseded, not folded in underneath.
     let ceiling = regression_ceiling(b.p95_ms, b.ceiling_slack_ms);
-    if p95_ms > ceiling {
+    if b.ceiling_slack_ms > 0.0 && p95_ms > ceiling {
         (
             Verdict::Regressed,
             vec![format!(
                 "bench: REGRESSED — p95 {p95_ms:.2} ms > ceiling {ceiling:.2} ms \
-                 (baseline {:.2} ms + max(25%, 15 ms, slack {:.2} ms)); a structural slowdown, exit 1.",
+                 (baseline {:.2} ms + calibrated slack {:.2} ms); a structural slowdown, exit 1.",
                 b.p95_ms, b.ceiling_slack_ms
             )],
         )
@@ -727,24 +731,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn regression_ceiling_uses_max_of_relative_absolute_and_slack() {
-        // No calibrated slack (0.0): plain §9 form.
-        // Small baseline → the 15 ms floor dominates.
-        assert!((regression_ceiling(10.0, 0.0) - 25.0).abs() < 1e-9);
-        // Large baseline → 25% dominates.
-        assert!((regression_ceiling(100.0, 0.0) - 125.0).abs() < 1e-9);
-        // FIX 2 (A4c): a calibrated slack floor wider than §9's static max widens
-        // the ceiling — baseline 50, slack 40 → 50 + max(12.5, 15, 40) = 90.
+    fn regression_ceiling_is_baseline_plus_calibrated_slack_only() {
+        // D9/A4(c): the ceiling is baseline + the calibrated slack floor ALONE —
+        // no static relative or absolute term participates at all.
+        assert!((regression_ceiling(10.0, 0.0) - 10.0).abs() < 1e-9);
+        assert!((regression_ceiling(100.0, 0.0) - 100.0).abs() < 1e-9);
         assert!((regression_ceiling(50.0, 40.0) - 90.0).abs() < 1e-9);
-        // A slack SMALLER than the static floor never narrows the ceiling.
-        assert!((regression_ceiling(10.0, 3.0) - 25.0).abs() < 1e-9);
+        assert!((regression_ceiling(10.0, 3.0) - 13.0).abs() < 1e-9);
     }
 
     #[test]
     fn fix2_calibrated_slack_absorbs_in_jitter_p95() {
-        // A noisy box: calibrated jitter (40 ms) exceeds §9's static 15 ms. An
-        // in-jitter run must NOT trip a blocking REGRESSED (the permanent-red drift
-        // A4c retires). baseline 50, slack 40 → ceiling 90; measured 75 ≤ 90.
+        // A noisy box: calibrated jitter (40 ms). An in-jitter run must NOT trip a
+        // blocking REGRESSED (the permanent-red drift A4c retires). baseline 50,
+        // slack 40 → ceiling 90; measured 75 ≤ 90.
         let env = EnvFingerprint {
             cpu_model: "CPU".into(),
             governor: "g".into(),
@@ -763,15 +763,62 @@ mod tests {
             Verdict::Regressed,
             "an in-jitter p95 must not REGRESS-block"
         );
-        // With the static-only §9 ceiling (50 + 15 = 65) this WOULD have regressed —
-        // pin that the widened ceiling is what saves it.
-        assert!(
-            75.0 > regression_ceiling(50.0, 0.0),
-            "static ceiling would have regressed"
-        );
         assert!(
             75.0 <= regression_ceiling(50.0, 40.0),
-            "the slack-widened ceiling absorbs it"
+            "the calibrated-slack ceiling absorbs it"
+        );
+    }
+
+    #[test]
+    fn lock_sub_ms_calibrated_baseline_catches_a_10x_slowdown() {
+        // D9/A4(c) lock: at sub-millisecond scale (D16: 0.7–2.4 ms) a real 10×
+        // structural slowdown must REGRESS — the old §9 static `max(25%, 15 ms)`
+        // floor would have swallowed this (ceiling = 1.0 + 15.0 = 16.0 ≥ 10.0 →
+        // wrongly PASS). With the static term gone, ceiling = 1.0 + 0.3 = 1.3 ms,
+        // and 10.0 ms > 1.3 ms → REGRESSED.
+        let env = EnvFingerprint {
+            cpu_model: "CPU".into(),
+            governor: "g".into(),
+            power_source: "AC".into(),
+            kernel: "k".into(),
+        };
+        let baseline = Baseline {
+            p95_ms: 1.0,
+            design_budget_ms: 100.0, // wide enough that WARN cannot mask this
+            ceiling_slack_ms: 0.3,   // a real, tiny, calibrated A4(c) slack
+            env: env.clone(),
+        };
+        let (v, _loud) = verdict_of(10.0, Some(&baseline), &env);
+        assert_eq!(
+            v,
+            Verdict::Regressed,
+            "a 10x sub-ms slowdown must REGRESS now that the static floor is gone"
+        );
+    }
+
+    #[test]
+    fn lock_uncalibrated_baseline_never_regresses() {
+        // An uncalibrated baseline (ceiling_slack_ms == 0.0, e.g. a bare
+        // `--update-baseline` with no prior `--calibrate`) has no valid jitter
+        // floor to gate on — the REGRESSED check must be inert (measure-only)
+        // regardless of how large the measured p95 is.
+        let env = EnvFingerprint {
+            cpu_model: "CPU".into(),
+            governor: "g".into(),
+            power_source: "AC".into(),
+            kernel: "k".into(),
+        };
+        let uncalibrated = Baseline {
+            p95_ms: 1.0,
+            design_budget_ms: 0.0,
+            ceiling_slack_ms: 0.0,
+            env: env.clone(),
+        };
+        let (v, _loud) = verdict_of(10_000.0, Some(&uncalibrated), &env);
+        assert_ne!(
+            v,
+            Verdict::Regressed,
+            "an uncalibrated baseline must never REGRESS-block — measure-only until --calibrate"
         );
     }
 
@@ -884,10 +931,10 @@ mod tests {
         let baseline = Baseline {
             p95_ms: 10.0,
             design_budget_ms: 12.0,
-            ceiling_slack_ms: 3.0,
+            ceiling_slack_ms: 15.0,
             env: env.clone(),
         };
-        // ceiling = 10 + max(2.5, 15, slack 3) = 25.
+        // ceiling = 10 + calibrated slack 15 = 25 (D9/A4(c): no static term).
         assert_eq!(verdict_of(11.0, Some(&baseline), &env).0, Verdict::Pass); // ≤ budget
         assert_eq!(verdict_of(20.0, Some(&baseline), &env).0, Verdict::Warn); // > budget, ≤ ceiling
         assert_eq!(
@@ -900,23 +947,29 @@ mod tests {
     fn fix5_inert_design_budget_never_warns() {
         // An update-baseline-with-no-prior baseline has an INERT (0.0) design budget:
         // the WARN-over-budget branch must never trip (only the regression ceiling
-        // gates). A real p95 far above the 0.0 budget but under the ceiling → PASS.
+        // gates). A real p95 far above the 0.0 budget but under the (calibrated)
+        // ceiling → PASS. The slack here is a real calibrated slack (not 0.0) so the
+        // ceiling itself stays an active gate — see `lock_uncalibrated_baseline_
+        // never_regresses` for the fully-uncalibrated (slack == 0.0) case.
         let env = EnvFingerprint {
             cpu_model: "CPU".into(),
             governor: "g".into(),
             power_source: "AC".into(),
             kernel: "k".into(),
         };
-        let inert = Baseline {
+        let inert_budget = Baseline {
             p95_ms: 10.0,
             design_budget_ms: 0.0, // inert (A4a: only --calibrate sets a real budget)
-            ceiling_slack_ms: 0.0,
+            ceiling_slack_ms: 5.0, // a real calibrated slack → ceiling = 15
             env: env.clone(),
         };
-        // 20 > 0.0 (the inert budget) but ≤ ceiling (25) → PASS, not WARN.
-        assert_eq!(verdict_of(20.0, Some(&inert), &env).0, Verdict::Pass);
-        // The ceiling still gates a genuine regression.
-        assert_eq!(verdict_of(30.0, Some(&inert), &env).0, Verdict::Regressed);
+        // 12 > 0.0 (the inert budget) but ≤ ceiling (15) → PASS, not WARN.
+        assert_eq!(verdict_of(12.0, Some(&inert_budget), &env).0, Verdict::Pass);
+        // The calibrated ceiling still gates a genuine regression.
+        assert_eq!(
+            verdict_of(20.0, Some(&inert_budget), &env).0,
+            Verdict::Regressed
+        );
     }
 
     #[test]

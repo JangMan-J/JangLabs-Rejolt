@@ -65,7 +65,7 @@ never closes it — the observation is the evidence):
 | WP-7 | P13, P14, P15 | `2ca2929` | 182 (+50) | Config + CLI surface + bootstrap + bench/calibration; 5 verify defects fixed (bootstrap fail-open, A4 slack) |
 | WP-5 | P8 | `2a62fbe` | 225 | Hook dispatch (parallel/sonnet); 2 verify defects fixed (suppressOutput, +exit-taxonomy CLEAN) |
 | WP-6 | P12 | `2a62fbe` | 225 | Curation floors + locks (parallel/sonnet); 3 verify defects fixed (min-evidence span, seats) |
-| WP-8 | P16, P17, P18 | _pending_ | | |
+| WP-8 | P16, P17, P18 | `c7281f8` (+N14 fix) | 270 | Conformance matrix (23/23 §14 + 11/11 P16) + N-sweep + fence, 3-way parallel/sonnet; N14 perf-gate defect fixed |
 
 ## Amendments raised during build (G4)
 
@@ -121,6 +121,7 @@ _none yet_
   3. seats `seatPromoteMinFires=0` panic (minor): a covered zero-fire seat cleared the gate + panicked (exit 101). Added the zero-fire floor (`fire_count >= 1`) to the seat gate + `get().unwrap_or(0)`.
   4. seats re-run dropped MEMORY.md leading newlines (minor, §8 byte-identity): `trim_start_matches('\n')` → `strip_prefix('\n')` once.
   Confirmed sound (sonnet got the hard parts right): the full hook exit taxonomy (0/2 only, never 1; deny short-circuit; kill-switch first — empirically driven), fail-open totality, A7 session-start ordering, D19 no-empty-envelope; and the curation floors, WR-01/WR-02, O_EXCL+rename-to-corpse lock, never-rewrites-bodies (D7). Store resolution (global config.toml) + at-home (cwd==$HOME) are documented fail-open-safe interpretations. **Directive to WP-8:** the recall/kill-switch/§14 fail-open rows land here.
+- **WP-8** (3-way parallel/sonnet: conformance matrix + N-sweep + fence; no separate adversarial-verify — it *is* the conformance layer, /vet is the comprehensive gate). The N-sweep (P17) is itself a mechanical adversarial check and it CAUGHT a real defect: **N14** — `bench::regression_ceiling` still baked in the §9 static `max(25%, 15ms)` slack beneath the A4-calibrated slack (a residue of the WP-7-verify FIX-2 instruction), which at the reseed's sub-ms scale swamps a real regression (a 10× slowdown verdicts PASS). D9 supersedes that static slack; A4(c) replaces it with pure `max(3σ, band)`. **Fixed at integration:** ceiling = baseline + calibrated slack only; REGRESSED gated on a calibrated slack (`>0`); lock test proves a sub-ms 10× slowdown now REGRESSES. Conformance: 23/23 §14 rows + 11/11 P16 rows covered (manifest); legacy fence (8 tests, proven to trip) + RB7 accepted-risk record; N1–N13 clean, N14 fixed. Residuals for /vet: RB1(b) live-host (owner), §14 row-23 `byMemoryId` lifecycle (CORE-SPEC clause for a plan-CUT feature — ledger precedence resolves it).
 
 ## Spec-friction reports from builders (G5)
 
