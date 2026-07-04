@@ -57,3 +57,14 @@ fixtures/<area>/bad/    # non-conformant inputs — the check MUST reject each
   recall ≡ projection, RB11 byPath glob, key normalization, atomicity, drift
   guardrail) are explicit good-passes/bad-fails assertions over temp stores. See
   `tests/flat_index.rs`.
+- `telemetry/` — WP-2b (P11). The marks + telemetry primitive (D25, A7, R7, §8).
+  `good/` = a well-formed telemetry JSONL (fire + read + session records with
+  integer ts) the window reader parses to ≥1 record; `bad/` = fire + read
+  records whose ts is unparseable, which the window reader drops symmetrically
+  (WR-05) to zero records. The check `telemetry-window-has-records` accepts iff
+  `Telemetry::read_window` yields ≥1 fire/read (far-future ts keeps the good
+  fixture in-window forever — no aging flakiness). The behavioral rows
+  (correlation gating + zero-fire, rotation + `.1`-first read order, mark-dir
+  writability + inert advisory, bad-ts symmetry, TTL single-source, R7 window
+  bound) are explicit good-passes/bad-fails assertions over injected temp dirs.
+  See `tests/telemetry.rs`.

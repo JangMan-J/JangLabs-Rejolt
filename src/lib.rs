@@ -13,12 +13,14 @@
 
 pub mod catalog;
 pub mod cli;
+pub mod config;
 pub mod conformance;
 pub mod frontmatter;
 pub mod grammar;
 pub mod index;
 pub mod rebuild;
 pub mod tag;
+pub mod telemetry;
 pub mod tier;
 
 /// The crate version, sourced from Cargo at compile time. Surfaced by

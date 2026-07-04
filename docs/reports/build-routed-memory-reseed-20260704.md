@@ -58,8 +58,8 @@ never closes it — the observation is the evidence):
 |----|---------|--------|--------------|-------|
 | WP-0 | P1 | `f9616df` | 5 | Skeleton + G2 harness proven (rubber-stamp self-test) |
 | WP-1 | P2, P3 | `c07dcd6` | 21 fns / 39 fixtures | Parser + grammar loader; 6 verify defects fixed & locked before commit |
-| WP-2 | P4, P5 | `see log` | 51 (+30) | Flat index + one walk + rebuild + drift; 5 verify defects fixed (byPath `**`, line-safety) |
-| WP-2b | P11 | _pending_ | | |
+| WP-2 | P4, P5 | `2bf5a74` | 51 (+30) | Flat index + one walk + rebuild + drift; 5 verify defects fixed (byPath `**`, line-safety) |
+| WP-2b | P11 | `see log` | 70 (+19) | Marks + telemetry; 5 verify defects fixed (atomic append, injective marks, correlation gating) |
 | WP-3 | P7, P6 | _pending_ | | |
 | WP-4 | P9, P10 | _pending_ | | |
 | WP-7 | P13, P14, P15 | _pending_ | | |
@@ -93,6 +93,13 @@ _none yet_
   4. generation_id NUL-framing not injective (nit): length-prefixed hash fields.
   5. no fsync in write_atomic (nit): fsync temp + parent dir (D14 durable across power loss).
   Confirmed sound & unchanged: normalization symmetry (the A2 fix), RB9 one-walk, torn-pair detection, single-reader fail-open, tier map, D10 partition, N1/N2/N5/N10/N11/N12.
+- **WP-2b** (4 Opus lenses vs D25/A7 correlation invariant + §8, read-only, uncommitted tree): 0 blockers, 1 major, 3 minors, 2 nits — all fixed & locked before commit:
+  1. non-atomic JSONL append (MAJOR): record + `\n` were two `write_all`s under O_APPEND → concurrent hook processes (Claude Code batches parallel tool calls) interleave to `{RA}{RB}` → both silently dropped by the reader (telemetry loss beyond the accepted A7 bias). Fixed: single `write_all(line+"\n")`; reader now byte-reads + `from_utf8_lossy` per line so corruption is bounded to one line.
+  2. non-injective mark filename (minor): `gpu notes`/`gpu_notes` collided → cross-memory read mis-credit (a per-memory correlation-invariant breach). Fixed: injective `%XX` percent-encoding.
+  3. `log_fire` gated on a separate `fired_ids` arg, not `record.mems` (minor): a mems⊄fired_ids caller could log a write-time fired-but-unread. Fixed: **new signature `log_fire(record)`** derives the gated set from `record.mems`; empty mems → ZeroFire.
+  4. no-follow TOCTOU + write/advisory disagreement (minor): fixed with `O_NOFOLLOW` opens + `runtime_dir_safe` (euid-owned, not group/world-writable) gating BOTH the write path and the inert advisory.
+  5. session markers discarded (nit): surfaced `WindowedTelemetry.sessions` for WP-6 floor-2.
+  Dep added: `libc 0.2` (arch-correct O_NOFOLLOW/geteuid; N10-fine). Confirmed sound: TTL single-source, WR-04 `.1`-first, WR-05 bad-ts symmetry, R7 window bound, record shapes, N2/N10/N12. **Directive to WP-3:** call `log_fire(&FireRecord)` (no separate fired_ids). **Directive to WP-6:** consume `WindowedTelemetry.sessions`.
 
 ## Spec-friction reports from builders (G5)
 
