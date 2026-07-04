@@ -17,11 +17,11 @@
 //! ## Wired vs not-yet-wired
 //!
 //! `bootstrap` (P14), `rebuild` (WP-2), `validate` (WP-1/WP-2), `check-write`
-//! (WP-4), `project` (WP-4), `search` (WP-3), and `bench` (P13) are WIRED to their
-//! engines. `maintain` / `seats` (WP-6) and the `hook` dispatch (WP-5) are
-//! clearly-marked NOT-YET-WIRED stubs — their Appendix D flag/exit SURFACE is
-//! defined here (so WP-8 consumes it verbatim), but the engine bodies land in
-//! WP-5 / WP-6.
+//! (WP-4), `project` (WP-4), `search` (WP-3), `bench` (P13), and `maintain` /
+//! `seats` (WP-6) are WIRED to their engines. The `hook` dispatch (WP-5) is
+//! still a clearly-marked NOT-YET-WIRED stub — its Appendix D flag/exit SURFACE
+//! is defined here (so WP-8 consumes it verbatim), but the engine body lands in
+//! WP-5.
 
 use std::path::{Path, PathBuf};
 
@@ -32,6 +32,7 @@ use crate::bench;
 use crate::bootstrap;
 use crate::catalog::{ArtifactRead, read_artifacts};
 use crate::config::{self, LoadedConfig};
+use crate::curation::{self, MaintainOutcome, SeatsOutcome};
 use crate::frontmatter::Triggers;
 use crate::grammar;
 use crate::guard::{GuardConfig, GuardVerdict, StoreRoots, check_write};
@@ -125,7 +126,7 @@ pub enum Command {
         #[arg(long)]
         expect: Option<String>,
     },
-    /// Self-curation maintenance pass (WP-6 — not yet wired).
+    /// Self-curation maintenance pass (WP-6).
     Maintain {
         /// The store directory.
         #[arg(long)]
@@ -134,7 +135,7 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Seat governance report / proposal (WP-6 — not yet wired).
+    /// Seat governance report / proposal (WP-6).
     Seats {
         /// The store directory.
         #[arg(long)]
@@ -736,31 +737,110 @@ fn cmd_bench(store: &Path, samples: Option<usize>, update_baseline: bool, calibr
 }
 
 // =============================================================================
-// maintain / seats / hook — NOT-YET-WIRED stubs (surface defined; bodies later)
+// maintain / seats (WP-6)
 // =============================================================================
 
-fn cmd_maintain(_store: &Path, _force: bool) -> i32 {
-    // NOT-YET-WIRED (WP-6): the self-curation maintenance pass (≥50-record trigger
-    // recheck-under-lock, claim-before-mutate, the three floors) lands in WP-6. The
-    // Appendix D surface (`--store [--force]`, exits 0/1/2) is defined above. A
-    // direct CLI must not masquerade as success, so the stub is loud and exits 1.
-    eprintln!(
-        "rejolt maintain: NOT YET WIRED (WP-6) — the --store/--force surface is defined; \
-         the curation engine lands in WP-6."
-    );
-    EXIT_FAIL
+fn cmd_maintain(store: &Path, force: bool) -> i32 {
+    let loaded = match load_config(store) {
+        Ok(l) => l,
+        Err(code) => return code,
+    };
+    match curation::maintain(store, &loaded.config, force) {
+        MaintainOutcome::BelowTrigger => {
+            println!("rejolt maintain: below the maintenance trigger — no pass run");
+            EXIT_OK
+        }
+        MaintainOutcome::LockHeld => {
+            println!("rejolt maintain: another pass holds the lock — skipped");
+            EXIT_OK
+        }
+        MaintainOutcome::ThresholdUnmetUnderLock => {
+            println!("rejolt maintain: threshold unmet on recheck (WR-02) — skipped");
+            EXIT_OK
+        }
+        MaintainOutcome::InsufficientEvidence {
+            session_days,
+            span_days,
+        } => {
+            println!(
+                "rejolt maintain: insufficient evidence ({session_days} session-days, \
+                 {span_days:.1}d span) — mutations deferred"
+            );
+            EXIT_OK
+        }
+        MaintainOutcome::Ran {
+            promoted,
+            demoted,
+            zero_fire,
+            bound,
+        } => {
+            println!(
+                "rejolt maintain: {} demoted, {} promoted, {} zero-fire (window {bound:?})",
+                demoted.len(),
+                promoted.len(),
+                zero_fire.len(),
+            );
+            for id in &demoted {
+                println!("  demoted: {id}");
+            }
+            for id in &promoted {
+                println!("  promoted: {id}");
+            }
+            EXIT_OK
+        }
+        MaintainOutcome::Io(e) => {
+            eprintln!("rejolt maintain: I/O error: {e}");
+            EXIT_FAIL
+        }
+    }
 }
 
-fn cmd_seats(_store: &Path, _propose: bool) -> i32 {
-    // NOT-YET-WIRED (WP-6): seat governance (PENDING-SEAT-CHANGES replace-not-stack,
-    // the seat dual-gate) lands in WP-6. The Appendix D surface (`--store
-    // [--propose]`, exits 0/1/2) is defined above. Loud, exits 1.
-    eprintln!(
-        "rejolt seats: NOT YET WIRED (WP-6) — the --store/--propose surface is defined; \
-         seat governance lands in WP-6."
-    );
-    EXIT_FAIL
+fn cmd_seats(store: &Path, propose: bool) -> i32 {
+    let loaded = match load_config(store) {
+        Ok(l) => l,
+        Err(code) => return code,
+    };
+    match curation::seats(store, &loaded.config, propose) {
+        Ok(SeatsOutcome::InsufficientEvidence {
+            session_days,
+            span_days,
+        }) => {
+            println!(
+                "rejolt seats: insufficient evidence ({session_days} session-days, \
+                 {span_days:.1}d span) — governance deferred"
+            );
+            EXIT_OK
+        }
+        Ok(SeatsOutcome::Ran {
+            demote,
+            probes,
+            written,
+        }) => {
+            println!(
+                "rejolt seats: {} seat(s) probed, {} demote proposal(s){}",
+                probes.len(),
+                demote.len(),
+                if written {
+                    " — pending block written"
+                } else {
+                    ""
+                }
+            );
+            for p in &probes {
+                println!("  {}: covered={} fires={}", p.stem, p.covered, p.fire_count);
+            }
+            EXIT_OK
+        }
+        Err(e) => {
+            eprintln!("rejolt seats: I/O error: {e}");
+            EXIT_FAIL
+        }
+    }
 }
+
+// =============================================================================
+// hook — NOT-YET-WIRED stub (surface defined; body later, WP-5)
+// =============================================================================
 
 fn cmd_hook(_event: HookEvent) -> i32 {
     // NOT-YET-WIRED (WP-5): the hook dispatch (recall / write-guard / write-context /

@@ -17,6 +17,7 @@ pub mod catalog;
 pub mod cli;
 pub mod config;
 pub mod conformance;
+pub mod curation;
 pub mod frontmatter;
 pub mod grammar;
 pub mod guard;
