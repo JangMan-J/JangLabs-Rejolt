@@ -166,6 +166,28 @@ pub fn config_path(store_dir: &Path) -> PathBuf {
     store_dir.join("config.toml")
 }
 
+/// The GLOBAL default config path hook mode reads (plan P8; Appendix D's `hook`
+/// row carries no `--store` flag, unlike every other subcommand): `${XDG_CONFIG_
+/// HOME:-~/.config}/rejolt/config.toml`. This mirrors the XDG-style convention
+/// [`crate::telemetry::default_runtime_dir`] already uses for the runtime mark
+/// dir (`${XDG_RUNTIME_DIR:-~/.cache}/rejolt/`) — same engine namespace, same
+/// env-var-with-fallback shape.
+///
+/// It is a **different file** from the per-store `config.toml` [`config_path`]
+/// resolves: hook mode has no store path yet to look inside, so it reads this
+/// one FIRST — via [`load_for_hook`] (fail-open) — to learn `storeRoots.boxRoot`
+/// (the store to operate on, [`crate::hook`]'s WP-5 store resolution), and reuses
+/// that SAME loaded [`Config`] as the tunable source for the rest of the
+/// dispatch (tier weights, TTLs, …) — one config load per hook invocation.
+pub fn default_config_path() -> PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from(".config"));
+    base.join("rejolt").join("config.toml")
+}
+
 /// A loaded config plus the advisory warnings a direct CLI should surface (loud,
 /// D12). `warnings` holds one line per unknown config key (R7): advisory, not fatal.
 #[derive(Debug, Clone)]
@@ -339,6 +361,12 @@ mod tests {
             ..Config::default()
         };
         assert_ne!(c, Config::default());
+    }
+
+    #[test]
+    fn default_config_path_is_engine_namespaced() {
+        let p = default_config_path();
+        assert!(p.ends_with("rejolt/config.toml"));
     }
 
     #[test]

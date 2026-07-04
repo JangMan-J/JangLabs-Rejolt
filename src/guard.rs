@@ -286,6 +286,28 @@ pub fn check_write(
     memory_write_guard(store, target_path, proposed_content, cfg)
 }
 
+/// Whether `target_path` (with `proposed_content`, `is_full_write`) is a
+/// **candidate memory write** — the same top-of-[`check_write`] gates
+/// (full-file, not the grammar file, not infra, frontmatter-fenced), WITHOUT
+/// running the tier ladder. WP-5's pre-op dispatch uses this to decide whether
+/// to attach the write-context payload ([`write_context`]) alongside the
+/// [`check_write`] verdict — the verdict already covers allow/deny; this only
+/// answers "is this the kind of write write-context applies to".
+pub fn is_candidate_memory_write(
+    target_path: &Path,
+    proposed_content: &str,
+    is_full_write: bool,
+    cfg: &GuardConfig,
+) -> bool {
+    if !is_full_write || is_grammar_target(target_path, &cfg.grammar_path) {
+        return false;
+    }
+    if is_infra_basename(target_path) {
+        return false;
+    }
+    frontmatter::frontmatter_block(proposed_content).is_ok()
+}
+
 /// The memory-write tiers (§6, in order). The caller has confirmed a full-file write
 /// of a frontmatter-bearing, non-grammar, non-infra target.
 fn memory_write_guard(
@@ -991,5 +1013,48 @@ mod tests {
         assert!(is_infra_basename(Path::new("/s/_grammar.toml")));
         assert!(is_infra_basename(Path::new("/s/MEMORY.md")));
         assert!(!is_infra_basename(Path::new("/s/gpu.md")));
+    }
+
+    #[test]
+    fn candidate_memory_write_matrix() {
+        let cfg = GuardConfig {
+            grammar_path: PathBuf::from("/s/_grammar.toml"),
+            roots: StoreRoots::default(),
+        };
+        // GOOD: a full, frontmatter-fenced, non-infra, non-grammar write.
+        assert!(is_candidate_memory_write(
+            Path::new("/s/gpu.md"),
+            "---\nname: x\n---\nbody",
+            true,
+            &cfg,
+        ));
+        // BAD: partial edit (not full) never counts, even with fenced content.
+        assert!(!is_candidate_memory_write(
+            Path::new("/s/gpu.md"),
+            "---\nname: x\n---\nbody",
+            false,
+            &cfg,
+        ));
+        // BAD: the grammar file itself is not a "memory" candidate.
+        assert!(!is_candidate_memory_write(
+            Path::new("/s/_grammar.toml"),
+            "grammar-version = 1\n",
+            true,
+            &cfg,
+        ));
+        // BAD: an infra file (MEMORY.md) is not a memory candidate.
+        assert!(!is_candidate_memory_write(
+            Path::new("/s/MEMORY.md"),
+            "# router\n",
+            true,
+            &cfg,
+        ));
+        // BAD: no frontmatter fences at all.
+        assert!(!is_candidate_memory_write(
+            Path::new("/s/gpu.md"),
+            "plain body, no fences",
+            true,
+            &cfg,
+        ));
     }
 }
