@@ -631,3 +631,69 @@ fn now() -> i64 {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
+
+const DAY: i64 = 86_400;
+
+// =============================================================================
+// FIX 2 — the unwindowed evidence fields are NOT capped by the 30-day window.
+// =============================================================================
+
+#[test]
+fn unwindowed_evidence_fields_ignore_the_30_day_window() {
+    let (tel, _run, telp) = writable_telemetry("unwindowed", Config::default());
+    let n = now();
+
+    // Three session markers on three distinct days: two INSIDE the default
+    // 30-day window (day 0, day 1) and one WAY outside it (day 40) — the
+    // distinct-session-day count must include all three regardless of window.
+    // A fire-shaped record even older (day 50) with no session signal at all
+    // proves `unwindowed_earliest_ts` scans ALL parseable-ts records, not just
+    // sessions.
+    write_lines(
+        &telp,
+        &[
+            format!("{{\"ts\":{},\"signal\":\"session\"}}", n),
+            format!("{{\"ts\":{},\"signal\":\"session\"}}", n - DAY),
+            format!("{{\"ts\":{},\"signal\":\"session\"}}", n - 40 * DAY),
+            format!("{{\"ts\":{},\"qid\":\"ancient-fire\"}}", n - 50 * DAY),
+        ],
+    );
+
+    let w = tel.read_window();
+
+    // The windowed `sessions`/`fires` still obey the 30-day cutoff (unchanged
+    // behavior): only the two recent session markers, and the day-50 fire-
+    // shaped record (out of window) is dropped entirely from `fires`.
+    assert_eq!(
+        w.sessions.len(),
+        2,
+        "windowed sessions still respect the 30-day cutoff"
+    );
+    assert!(
+        w.fires.is_empty(),
+        "the ancient fire-shaped record is outside the window"
+    );
+
+    // FIX 2: the unwindowed fields see ALL THREE distinct session-days...
+    assert_eq!(
+        w.unwindowed_session_days, 3,
+        "unwindowed session-day count must NOT be capped by the 30-day window"
+    );
+    // ...and the earliest ts across EVERY parseable-ts record (day 50's fire-
+    // shaped line, not just the day-40 session) — proving it is not
+    // session-only either.
+    let expected_earliest = n - 50 * DAY;
+    assert_eq!(
+        w.unwindowed_earliest_ts,
+        Some(expected_earliest),
+        "unwindowed earliest ts must scan ALL record kinds, uncapped by the window"
+    );
+}
+
+#[test]
+fn unwindowed_evidence_fields_are_none_and_zero_when_telemetry_is_empty() {
+    let (tel, _run, _telp) = writable_telemetry("unwindowed-empty", Config::default());
+    let w = tel.read_window();
+    assert_eq!(w.unwindowed_earliest_ts, None);
+    assert_eq!(w.unwindowed_session_days, 0);
+}

@@ -221,7 +221,14 @@ fn allowed_memory_write_emits_write_context_exit_0() {
         ctx.contains("OBSERVED BEHAVIOR"),
         "write-context schema hint present: {ctx}"
     );
-    assert_eq!(parsed["hookSpecificOutput"]["suppressOutput"], true);
+    assert_eq!(
+        parsed["suppressOutput"], true,
+        "suppressOutput must be a TOP-LEVEL sibling of hookSpecificOutput, not nested"
+    );
+    assert!(
+        parsed["hookSpecificOutput"]["suppressOutput"].is_null(),
+        "suppressOutput must NOT be nested inside hookSpecificOutput"
+    );
 }
 
 #[test]
@@ -474,6 +481,10 @@ fn session_start_emits_routability_and_drift_advisories_when_not_at_home() {
     let ctx = parsed["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .expect("additionalContext present");
+    assert_eq!(
+        parsed["suppressOutput"], true,
+        "suppressOutput must be a TOP-LEVEL sibling of hookSpecificOutput, not nested"
+    );
     assert!(
         ctx.contains("routability"),
         "routability delta present: {ctx}"

@@ -191,6 +191,19 @@ pub struct WindowedTelemetry {
     /// How many fire / read / session records were dropped for an unparseable ts
     /// (WR-05 symmetric drop; a bad-ts session cannot be assigned a day either).
     pub dropped_bad_ts: usize,
+    /// The earliest parseable `ts` among ALL retained records (`.1` + live),
+    /// **NOT** window-capped — ground truth `../synapse/lib/memory_surface.py`
+    /// `_evidence_stats`: "this measures whether enough observation exists AT
+    /// ALL", a separate question from the D-41 rate-lookback window. Feeds the
+    /// minimum-evidence floor's `≥30 days span` leg, which the windowed cutoff
+    /// (`≤30d` by construction) could otherwise never let fire. `None` when no
+    /// record anywhere has a parseable `ts`.
+    pub unwindowed_earliest_ts: Option<i64>,
+    /// The count of DISTINCT session-days (`ts.div_euclid(86_400)`) among ALL
+    /// session-marker records (`.1` + live), **NOT** window-capped — same
+    /// ground-truth rationale as [`unwindowed_earliest_ts`]. Feeds the
+    /// minimum-evidence floor's `≥10 distinct session-days` leg.
+    pub unwindowed_session_days: usize,
 }
 
 // =============================================================================
@@ -617,6 +630,22 @@ impl Telemetry {
             }
         }
 
+        // FIX 2 (unwindowed evidence, NOT window-capped): the earliest parseable
+        // `ts` among ALL retained records (any kind — mirrors the ground truth's
+        // `oldest`, which updates for every record regardless of classification),
+        // and the count of distinct session-days among ALL session records.
+        // Computed from `raw` BEFORE the windowing pass below, so neither figure
+        // is bounded by `effective_cutoff`.
+        let unwindowed_earliest_ts = raw.iter().filter_map(|r| r.ts).min();
+        let mut unwindowed_session_day_set: BTreeSet<i64> = BTreeSet::new();
+        for r in &raw {
+            let Some(v) = &r.value else { continue };
+            if let Class::Session(Some(ts)) = classify(v) {
+                unwindowed_session_day_set.insert(ts.div_euclid(SECONDS_PER_DAY));
+            }
+        }
+        let unwindowed_session_days = unwindowed_session_day_set.len();
+
         // The rotation bound (R7): the ts of the oldest record still inside the
         // most-recent 2×tel_max_bytes of file bytes. `None` ⇒ rotation not binding.
         let budget = self.config.tel_max_bytes.saturating_mul(2);
@@ -680,6 +709,8 @@ impl Telemetry {
             sessions,
             bound,
             dropped_bad_ts,
+            unwindowed_earliest_ts,
+            unwindowed_session_days,
         }
     }
 }

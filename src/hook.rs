@@ -62,9 +62,10 @@
 //! at-home floor skip)
 //!
 //! 1. [`crate::telemetry::Telemetry::log_session`] FIRST (the session marker).
-//! 2. [`maintenance_due`] — computed and exposed; the maintenance PASS itself
-//!    (`curation::maintain`, WP-6) is **not wired here** (WP-6 does not exist in
-//!    this worktree). See the `// INTEGRATOR:` marker below.
+//! 2. [`maintenance_due`] — when true, the maintenance PASS
+//!    ([`crate::curation::maintain`], WP-6) runs (wired at WP-5+WP-6 integration).
+//!    It is internally lock-guarded (O_EXCL + recheck-under-lock) and fail-open:
+//!    its outcome is discarded and a fault never blocks session start.
 //! 3. The **at-home floor skip** ([`is_at_home`]), then — if not at home — the
 //!    session-start advisories: (a) the routability delta (the D18
 //!    `routabilityReport` reader) and (b) the §11 drift guardrail
@@ -175,14 +176,19 @@ fn grammar_path_for(store: &Path, config: &Config) -> PathBuf {
 // =============================================================================
 
 /// Emit one `hookSpecificOutput.additionalContext` JSON envelope to stdout
-/// (Appendix C: `+ suppressOutput: true`). The caller only invokes this when
-/// there is something to say — D12's quiet pass path is simply never calling it.
+/// (Appendix C: `+ suppressOutput: true`). `suppressOutput` MUST be a
+/// TOP-LEVEL sibling of `hookSpecificOutput`, not nested inside it — the host
+/// (proven synapse wiring, `memory-recall.sh`'s `jq -cn` emission) reads
+/// `suppressOutput` only at the top level; nested, the host never suppresses
+/// stdout and the raw JSON leaks into the transcript, breaking the D12
+/// quiet-advisory contract. The caller only invokes this when there is
+/// something to say — D12's quiet pass path is simply never calling it.
 fn emit_additional_context(hook_event_name: &str, text: &str) {
     let payload = serde_json::json!({
+        "suppressOutput": true,
         "hookSpecificOutput": {
             "hookEventName": hook_event_name,
             "additionalContext": text,
-            "suppressOutput": true,
         }
     });
     println!("{}", serde_json::to_string(&payload).unwrap_or_default());

@@ -55,7 +55,7 @@
 //! I/O only (no network, no unbounded loop) so that an outer `timeout` wrapper,
 //! if the host adapter applies one, has real headroom.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -227,28 +227,22 @@ fn release_lock(lock: &Path) {
 // Windowed evidence stats (the minimum-evidence floor, gates the WHOLE pass)
 // =============================================================================
 
-/// `(distinct session-days, span-days)` over the windowed telemetry (A7: the
-/// `min(30d, rotation bound)` window `read_window` already applied). Distinct
-/// session-days come from `sessions` (WR-03 parity: a busy day of resumes must
-/// not inflate the count); span is `now - earliest ts among fires/reads/sessions
-/// in-window`. Both are naturally bounded by the window itself.
+/// `(distinct session-days, span-days)` over the **UNWINDOWED** telemetry (FIX
+/// 2): ground truth `../synapse/lib/memory_surface.py::_evidence_stats` computes
+/// this over ALL retained (`.1` + live) records, not the `min(30d, rotation
+/// bound)` window `read_window` applies for the D-41 rate lookback — "this
+/// measures whether enough observation exists AT ALL", a separate question. The
+/// windowed cutoff is always `≤30 days` by construction, so reading this floor
+/// from the windowed data would make the `≥30 days span` leg permanently dead.
+/// Distinct session-days come from [`WindowedTelemetry::unwindowed_session_days`]
+/// (WR-03 parity: a busy day of resumes must not inflate the count); span is
+/// `now - unwindowed_earliest_ts`.
 fn evidence_stats(window: &WindowedTelemetry) -> (u64, f64) {
-    let mut days: BTreeSet<i64> = BTreeSet::new();
-    for s in &window.sessions {
-        days.insert(s.ts.div_euclid(SECONDS_PER_DAY));
-    }
-    let earliest = window
-        .fires
-        .iter()
-        .map(|f| f.ts)
-        .chain(window.reads.iter().map(|r| r.ts))
-        .chain(window.sessions.iter().map(|s| s.ts))
-        .min();
-    let span_days = match earliest {
+    let span_days = match window.unwindowed_earliest_ts {
         Some(e) => ((now_unix() - e) as f64 / SECONDS_PER_DAY as f64).max(0.0),
         None => 0.0,
     };
-    (days.len() as u64, span_days)
+    (window.unwindowed_session_days as u64, span_days)
 }
 
 fn count_fires_by_id(fires: &[FireRecord]) -> BTreeMap<String, u64> {
@@ -509,10 +503,18 @@ fn extract_seat_link(line: &str) -> Option<String> {
     None
 }
 
-/// Strip any existing `<!-- PENDING-SEAT-CHANGES … -->` block (plus any
-/// newlines immediately following it) from `text`. A block with no closing
-/// `-->` anywhere in the remaining text is left untouched (no match — the
+/// Strip any existing `<!-- PENDING-SEAT-CHANGES … -->` block (plus the SINGLE
+/// newline terminating it — `write_pending_block` always emits exactly one
+/// `\n` after `-->`, never more) from `text`. A block with no closing `-->`
+/// anywhere in the remaining text is left untouched (no match — the
 /// defensive, non-destructive direction).
+///
+/// FIX 4: this must strip exactly the block's own terminator, not every
+/// leading newline that happens to follow it — `trim_start_matches('\n')`
+/// over-consumed the real content's own leading blank line(s) too, so a
+/// SECOND `seats --propose` run (strip-then-rewrite) would silently drop
+/// `MEMORY.md`'s genuine leading `\n\n`, violating §8's "non-block content
+/// stays byte-identical".
 fn strip_pending_block(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -528,7 +530,7 @@ fn strip_pending_block(text: &str) -> String {
             break;
         };
         let after_close = &from_marker[end_rel + 3..];
-        rest = after_close.trim_start_matches('\n');
+        rest = after_close.strip_prefix('\n').unwrap_or(after_close);
     }
     out
 }
@@ -654,8 +656,12 @@ pub fn seats(store: &Path, cfg: &Config, propose: bool) -> std::io::Result<Seats
             covered,
             fire_count,
         });
-        // The seat dual-gate (D7/§8): BOTH legs, never either alone.
-        if covered && fire_count >= cfg.seat_promote_min_fires {
+        // The seat dual-gate (D7/§8): BOTH legs, never either alone. The
+        // `fire_count >= 1` conjunct is the zero-fire floor (D-43 parity, FIX
+        // 3): a covered ZERO-FIRE seat must NEVER be demote-eligible, even under
+        // a `seatPromoteMinFires = 0` config — without it, `fire_count >= 0`
+        // trivially holds for a never-fired seat.
+        if covered && fire_count >= 1 && fire_count >= cfg.seat_promote_min_fires {
             demote.push(stem.clone());
         }
     }
@@ -664,7 +670,14 @@ pub fn seats(store: &Path, cfg: &Config, propose: bool) -> std::io::Result<Seats
     if propose && router_path.exists() {
         let proposals: Vec<String> = demote
             .iter()
-            .map(|s| format!("DEMOTE: {s}.md — fired {}x in window", fires_by_id[s]))
+            .map(|s| {
+                // FIX 3: `fires_by_id[s]` would panic for a stem `count_fires_by_id`
+                // never inserted (a zero-fire seat) — not reachable given the
+                // `fire_count >= 1` gate above, but indexing defensively (rather
+                // than relying on that invariant never drifting) costs nothing.
+                let fires = fires_by_id.get(s).copied().unwrap_or(0);
+                format!("DEMOTE: {s}.md — fired {fires}x in window")
+            })
             .collect();
         write_pending_block(&router_path, &proposals)?;
         written = true;
@@ -924,6 +937,50 @@ mod tests {
         assert_eq!(after_clear, original);
     }
 
+    /// FIX 4 lock-in: `strip_pending_block` must consume only the block's OWN
+    /// single terminating `\n`, never the real content's own leading blank
+    /// line(s). A `trim_start_matches('\n')` regression would eat the `\n\n`
+    /// below on a SECOND pass (strip existing block -> re-prepend), silently
+    /// dropping MEMORY.md's leading blank lines.
+    #[test]
+    fn pending_block_preserves_leading_blank_lines_of_the_real_content_across_reruns() {
+        let dir = unique_dir("pending-leading-nl");
+        let router = dir.join("MEMORY.md");
+        // The real (non-block) content itself starts with TWO newlines.
+        let original = "\n\n# Memory Router\n\n## Always-relevant entries\n\n- [x](x.md)\n";
+        fs::write(&router, original).unwrap();
+
+        write_pending_block(&router, &["DEMOTE: x.md — reason A".to_string()]).unwrap();
+        let after_first = fs::read_to_string(&router).unwrap();
+        assert_eq!(after_first.matches(PENDING_BLOCK_MARKER).count(), 1);
+        assert!(
+            after_first.ends_with(original),
+            "the leading \\n\\n of the real content must survive the FIRST run: {after_first:?}"
+        );
+
+        // A second run (strip the just-written block, then re-prepend) must NOT
+        // additionally consume the real content's leading blank lines.
+        write_pending_block(&router, &["DEMOTE: x.md — reason B".to_string()]).unwrap();
+        let after_second = fs::read_to_string(&router).unwrap();
+        assert_eq!(
+            after_second.matches(PENDING_BLOCK_MARKER).count(),
+            1,
+            "re-run must replace, not stack"
+        );
+        assert!(
+            after_second.ends_with(original),
+            "the leading \\n\\n of the real content must ALSO survive the SECOND run: {after_second:?}"
+        );
+
+        // Clearing restores the ORIGINAL content byte-for-byte, leading blanks intact.
+        write_pending_block(&router, &[]).unwrap();
+        let after_clear = fs::read_to_string(&router).unwrap();
+        assert_eq!(
+            after_clear, original,
+            "clearing must restore the original byte-for-byte"
+        );
+    }
+
     #[test]
     fn concretize_path_glob_instantiates_double_star_and_tilde() {
         assert_eq!(
@@ -970,45 +1027,53 @@ mod tests {
         }
     }
 
-    #[test]
-    fn evidence_stats_counts_distinct_session_days_and_earliest_span() {
-        let now = now_unix();
-        let day = SECONDS_PER_DAY;
-        // GOOD: three sessions on three distinct days -> 3 distinct days.
-        let window = WindowedTelemetry {
-            fires: vec![fire(now - 5 * day, "m")],
-            reads: vec![],
-            sessions: vec![session(now), session(now - day), session(now - 2 * day)],
-            bound: WindowBound::TimeCapped,
-            dropped_bad_ts: 0,
-        };
-        let (days, span) = evidence_stats(&window);
-        assert_eq!(days, 3);
-        // Span is bounded by the EARLIEST record of any kind (the fire at -5d),
-        // not just sessions.
-        assert!((span - 5.0).abs() < 0.1, "span was {span}");
-
-        // BAD (contrast): two sessions on the SAME calendar day must count once,
-        // not twice (WR-03 parity — a busy day of resumes must not inflate it).
-        let same_day = WindowedTelemetry {
-            fires: vec![],
-            reads: vec![],
-            sessions: vec![session(now), session(now + 1)],
-            bound: WindowBound::TimeCapped,
-            dropped_bad_ts: 0,
-        };
-        let (days2, _) = evidence_stats(&same_day);
-        assert_eq!(days2, 1, "same calendar day must dedupe to one");
-
-        // Empty window -> zero days, zero span.
-        let empty = WindowedTelemetry {
+    /// A bare [`WindowedTelemetry`] fixture: the windowed `fires`/`reads`/
+    /// `sessions` are irrelevant to [`evidence_stats`] post-FIX-2 (it reads only
+    /// the two `unwindowed_*` fields) — kept empty here on purpose so this test
+    /// cannot pass by accident via the OLD (windowed) derivation.
+    fn windowed_fixture(
+        unwindowed_earliest_ts: Option<i64>,
+        unwindowed_session_days: usize,
+    ) -> WindowedTelemetry {
+        WindowedTelemetry {
             fires: vec![],
             reads: vec![],
             sessions: vec![],
             bound: WindowBound::TimeCapped,
             dropped_bad_ts: 0,
-        };
+            unwindowed_earliest_ts,
+            unwindowed_session_days,
+        }
+    }
+
+    #[test]
+    fn evidence_stats_reads_the_unwindowed_fields_not_the_windowed_records() {
+        let now = now_unix();
+        let day = SECONDS_PER_DAY;
+
+        // GOOD: span is derived from `unwindowed_earliest_ts`, span ~5 days.
+        let window = windowed_fixture(Some(now - 5 * day), 3);
+        let (days, span) = evidence_stats(&window);
+        assert_eq!(days, 3);
+        assert!((span - 5.0).abs() < 0.1, "span was {span}");
+
+        // Empty/None -> zero days, zero span.
+        let empty = windowed_fixture(None, 0);
         assert_eq!(evidence_stats(&empty), (0, 0.0));
+
+        // FIX 2 regression guard: even if the windowed `sessions`/`fires`/`reads`
+        // carried plenty of (windowed) evidence, `evidence_stats` must NOT look at
+        // them — only the unwindowed fields count.
+        let mut with_windowed_noise = windowed_fixture(None, 0);
+        with_windowed_noise.fires = vec![fire(now, "m")];
+        with_windowed_noise.reads = vec![];
+        with_windowed_noise.sessions =
+            vec![session(now), session(now - day), session(now - 2 * day)];
+        assert_eq!(
+            evidence_stats(&with_windowed_noise),
+            (0, 0.0),
+            "evidence_stats must ignore windowed fires/reads/sessions entirely"
+        );
     }
 
     #[test]
@@ -1075,7 +1140,16 @@ mod tests {
         let dir = unique_dir("wr01");
         let cfg = Config::default();
         let tel_path = dir.join(crate::telemetry::TELEMETRY_FILENAME);
-        let lines: String = (0..60).map(|i| format!("{{\"ts\":{i}}}\n")).collect();
+        // FIX 2: `ts` must be a REALISTIC recent timestamp, not `0..60` (near the
+        // 1970 epoch) — since `unwindowed_earliest_ts` (FIX 2) now scans ALL
+        // parseable-ts records regardless of classification, an epoch-adjacent ts
+        // would give a multi-decade unwindowed span and accidentally clear the
+        // minimum-evidence floor's span leg, defeating this test's actual point
+        // (WR-01 claim-before-mutate under a genuinely insufficient-evidence pass).
+        let now = now_unix();
+        let lines: String = (0..60)
+            .map(|i| format!("{{\"ts\":{}}}\n", now - i))
+            .collect();
         fs::write(&tel_path, lines).unwrap();
         let tel = Telemetry::new(dir.join("rt"), tel_path.clone(), cfg.clone());
 

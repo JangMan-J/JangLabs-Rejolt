@@ -188,6 +188,67 @@ fn zero_fire_floor_never_demotes_while_low_read_rate_does_once_evidence_is_suffi
 }
 
 // =============================================================================
+// FIX 2 — the minimum-evidence "≥30 days span" leg reads UNWINDOWED telemetry,
+// not the (always ≤30d) windowed slice, so a long-observed-but-few-session-days
+// store can still clear the floor via span alone.
+// =============================================================================
+
+#[test]
+fn min_evidence_span_leg_fires_from_unwindowed_telemetry_not_the_30d_window() {
+    let store = unique_dir("span-leg");
+    let cfg = Config::default();
+    let now = now_unix();
+
+    // A real fired-but-unread memory: 4 recent fires (inside any window), 0
+    // reads -> rate 0.0 <= demoteThreshold(0.05) -> demote-eligible once the
+    // evidence floor clears.
+    write_memory(&store, "stale-mem", "", Some(0));
+    let mut lines: Vec<String> = (0..4).map(|i| fire_line(now - i, "stale-mem")).collect();
+
+    // Only 3 distinct session-days -> WELL under minEvidenceSessions(10). One of
+    // them is 40 days old (oldest record overall) -> span ~40d >= minEvidenceDays
+    // (30) -> the span leg alone must clear the OR-guard, even though the
+    // windowed reader (`min(30d, rotation bound)`) would never see that day-40
+    // marker or let span exceed ~30 by construction.
+    lines.push(session_line(now));
+    lines.push(session_line(now - DAY));
+    lines.push(session_line(now - 40 * DAY));
+    append_telemetry(&store, &lines);
+
+    let outcome = curation::maintain(&store, &cfg, true);
+    let demoted = match outcome {
+        MaintainOutcome::Ran { demoted, .. } => demoted,
+        other => panic!("expected the span leg to clear the evidence floor and Ran: {other:?}"),
+    };
+    assert!(
+        demoted.contains(&"stale-mem".to_string()),
+        "the fired-but-unread memory must be demoted once the span leg passes: {demoted:?}"
+    );
+    let mutated = read_memory(&store, "stale-mem");
+    assert!(mutated.contains("declineCount: 1"));
+
+    // Contrast (still blocks): <10 session-days AND <30d span -> InsufficientEvidence.
+    let blocked_store = unique_dir("span-leg-blocked");
+    write_memory(&blocked_store, "stale-mem-2", "", Some(0));
+    let mut blocked_lines: Vec<String> =
+        (0..4).map(|i| fire_line(now - i, "stale-mem-2")).collect();
+    // 3 distinct session-days, all recent -> span only ~2 days, well under 30.
+    blocked_lines.push(session_line(now));
+    blocked_lines.push(session_line(now - DAY));
+    blocked_lines.push(session_line(now - 2 * DAY));
+    append_telemetry(&blocked_store, &blocked_lines);
+
+    let blocked_outcome = curation::maintain(&blocked_store, &cfg, true);
+    assert!(
+        matches!(
+            blocked_outcome,
+            MaintainOutcome::InsufficientEvidence { .. }
+        ),
+        "< 10 session-days AND < 30d span must still block: {blocked_outcome:?}"
+    );
+}
+
+// =============================================================================
 // Seat dual-gate: covered+high-fire demotes; covered+low-fire and
 // high-fire+uncovered both do NOT.
 // =============================================================================
@@ -313,6 +374,136 @@ fn seat_dual_gate_demotes_only_when_covered_and_fires_meet_threshold() {
             format!("BODY for {stem} — must never change.\n")
         );
     }
+}
+
+// =============================================================================
+// FIX 3 — `seatPromoteMinFires = 0` + a covered ZERO-FIRE seat must not panic
+// (`fires_by_id[s]` indexing a stem `count_fires_by_id` never inserted) and
+// must NEVER propose that zero-fire seat for demotion (the zero-fire floor
+// applies to seats too, regardless of how low `seatPromoteMinFires` is set).
+// =============================================================================
+
+#[test]
+fn seat_promote_min_fires_zero_does_not_panic_and_never_demotes_a_zero_fire_seat() {
+    let store = unique_dir("seats-zerofire-zerothreshold");
+    let cfg = Config {
+        seat_promote_min_fires: 0,
+        ..Config::default()
+    };
+
+    // A covered seat (a real derivable `commands` probe) that NEVER fires at
+    // all — `count_fires_by_id` never inserts an entry for it.
+    write_memory(
+        &store,
+        "seat-covered-zerofire",
+        "    commands: [quxcmd]\n",
+        Some(0),
+    );
+    fs::write(
+        store.join("MEMORY.md"),
+        "# Memory Router\n\n## Always-relevant entries\n\n\
+         - [Covered, zero fire](seat-covered-zerofire.md)\n",
+    )
+    .unwrap();
+
+    let grammar_path = store.join("_grammar.toml");
+    fs::write(&grammar_path, EMPTY_GRAMMAR_SEED).unwrap();
+    rebuild(&store, &grammar_path, &BuildConfig::default()).expect("rebuild");
+
+    // NO fire telemetry for this seat at all — only enough evidence (session
+    // markers) to clear the minimum-evidence floor so the dual-gate itself is
+    // actually exercised.
+    sufficient_evidence_sessions(&store);
+
+    // Must exit cleanly (no panic) and propose zero demotions.
+    let outcome = curation::seats(&store, &cfg, true).expect("seats must not panic or error");
+    let (demote, probes, written) = match outcome {
+        SeatsOutcome::Ran {
+            demote,
+            probes,
+            written,
+        } => (demote, probes, written),
+        other => panic!("expected Ran: {other:?}"),
+    };
+    assert!(written);
+    assert_eq!(probes.len(), 1);
+    assert!(
+        probes[0].covered,
+        "the seat's own `commands` trigger must probe as covered"
+    );
+    assert_eq!(probes[0].fire_count, 0);
+    assert!(
+        demote.is_empty(),
+        "a zero-fire seat must NEVER be demote-eligible, even with seatPromoteMinFires=0: {demote:?}"
+    );
+
+    let router = fs::read_to_string(store.join("MEMORY.md")).unwrap();
+    assert!(
+        !router.contains("DEMOTE: seat-covered-zerofire"),
+        "no demotion proposal must be written for the zero-fire seat"
+    );
+}
+
+// =============================================================================
+// FIX 4 — a re-run of `seats --propose` must not eat MEMORY.md's own leading
+// blank lines (the non-block region stays byte-identical across re-runs, §8).
+// =============================================================================
+
+#[test]
+fn seats_propose_twice_preserves_memory_md_leading_blank_lines() {
+    let store = unique_dir("seats-leading-nl");
+    let cfg = Config::default();
+
+    write_memory(&store, "seat-a", "    commands: [quuxcmd]\n", Some(0));
+    // The real (non-block) MEMORY.md content starts with TWO blank lines.
+    fs::write(
+        store.join("MEMORY.md"),
+        "\n\n# Memory Router\n\n## Always-relevant entries\n\n- [A](seat-a.md)\n",
+    )
+    .unwrap();
+
+    let grammar_path = store.join("_grammar.toml");
+    fs::write(&grammar_path, EMPTY_GRAMMAR_SEED).unwrap();
+    rebuild(&store, &grammar_path, &BuildConfig::default()).expect("rebuild");
+    sufficient_evidence_sessions(&store);
+
+    // Covered + >= seatPromoteMinFires(5) fires -> a real demotion proposal, so
+    // a pending block actually gets written (an empty proposal set would be a
+    // true no-op over an already-block-free file, defeating this test).
+    let now = now_unix();
+    let lines: Vec<String> = (0..6).map(|i| fire_line(now - i, "seat-a")).collect();
+    append_telemetry(&store, &lines);
+
+    // First `seats --propose`.
+    curation::seats(&store, &cfg, true).expect("first seats run");
+    let after_first = fs::read_to_string(store.join("MEMORY.md")).unwrap();
+    let non_block_first = after_first
+        .rsplit_once("-->\n")
+        .map(|(_, rest)| rest)
+        .unwrap_or(after_first.as_str());
+
+    // Second `seats --propose` re-runs strip -> re-prepend over its OWN output.
+    curation::seats(&store, &cfg, true).expect("second seats run");
+    let after_second = fs::read_to_string(store.join("MEMORY.md")).unwrap();
+    assert_eq!(
+        after_second.matches("<!-- PENDING-SEAT-CHANGES").count(),
+        1,
+        "exactly one pending block after two runs"
+    );
+    let non_block_second = after_second
+        .rsplit_once("-->\n")
+        .map(|(_, rest)| rest)
+        .unwrap_or(after_second.as_str());
+
+    assert_eq!(
+        non_block_first, non_block_second,
+        "the non-block region (incl. MEMORY.md's leading blank lines) must be \
+         byte-identical across both runs"
+    );
+    assert!(
+        non_block_second.starts_with("\n\n# Memory Router"),
+        "the leading blank lines must survive: {non_block_second:?}"
+    );
 }
 
 // =============================================================================
