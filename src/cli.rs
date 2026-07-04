@@ -762,14 +762,12 @@ fn cmd_seats(_store: &Path, _propose: bool) -> i32 {
     EXIT_FAIL
 }
 
-fn cmd_hook(_event: HookEvent) -> i32 {
-    // NOT-YET-WIRED (WP-5): the hook dispatch (recall / write-guard / write-context /
-    // rebuild-refresh / read-signal / session marker + the `.surface-disabled`
-    // kill-switch) lands in WP-5. The Appendix D surface is defined: the event enum
-    // + payload on stdin, per A5 — quiet allow exit 0, write-guard deny exit 2 +
-    // stderr (short-circuit), NEVER exit 1. Until WP-5 wires it, the fail-open-correct
-    // not-ready behavior is a QUIET ALLOW (exit 0): an unwired hook must never block a
-    // host operation or exit 1.
-    eprintln!("rejolt hook: dispatch not yet wired (WP-5); allowing (fail-open).");
-    EXIT_OK
+fn cmd_hook(event: HookEvent) -> i32 {
+    // WIRED (WP-5): crate::hook::dispatch resolves the store (from the GLOBAL
+    // config — no `--store` flag on this subcommand, Appendix D), applies the
+    // `.surface-disabled` kill-switch, parses the stdin payload, and dispatches
+    // to recall / write-guard / write-context / rebuild-refresh / read-signal /
+    // the session marker + maintenance-due check. Exit taxonomy per A5: quiet
+    // allow (0) / write-guard deny (2, short-circuit) — NEVER 1.
+    crate::hook::dispatch(event)
 }

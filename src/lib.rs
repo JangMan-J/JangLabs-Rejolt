@@ -20,6 +20,7 @@ pub mod conformance;
 pub mod frontmatter;
 pub mod grammar;
 pub mod guard;
+pub mod hook;
 pub mod hooks;
 pub mod index;
 pub mod normalize;

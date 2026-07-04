@@ -88,8 +88,12 @@ pub struct MemoryFacts {
 }
 
 /// A store `.md` file is infra (excluded from the memory corpus) iff it is
-/// underscore-prefixed or is `MEMORY.md` (§3).
-fn is_infra(name: &str) -> bool {
+/// underscore-prefixed or is `MEMORY.md` (§3). `pub(crate)` so WP-5's post-op
+/// dispatch ([`crate::hook`]) can classify a written target as a memory file the
+/// SAME way the store scan does — one definition, no drift between "what
+/// `rebuild` scans" and "what the post-op refresh/read-signal treats as a
+/// memory".
+pub(crate) fn is_infra(name: &str) -> bool {
     name.starts_with('_') || name == "MEMORY.md"
 }
 

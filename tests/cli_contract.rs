@@ -396,14 +396,19 @@ fn maintain_and_seats_are_loud_not_yet_wired_stubs() {
 }
 
 #[test]
-fn hook_stub_is_fail_open_never_exit_one() {
-    // A5/D20: the hook path NEVER exits 1. The unwired stub is a quiet fail-open
-    // allow (exit 0) — an unwired hook must never block a host operation.
+fn hook_with_no_store_configured_is_fail_open_never_exit_one() {
+    // A5/D20: the hook path NEVER exits 1. `hook` has no `--store` flag (WP-5:
+    // it resolves the store from the GLOBAL config, `rejolt::config::
+    // default_config_path`); with no such config on this test's ambient
+    // environment, `box_root` resolves to `None` — a quiet fail-open allow
+    // (exit 0), never a block, never exit 1. The full wired dispatch (deny,
+    // recall, write-context, rebuild-refresh, read-signal, session-start
+    // advisories) is covered end-to-end, sandboxed, in `tests/hook_dispatch.rs`.
     for event in ["session-start", "pre-op", "post-op"] {
         let out = run(&["hook", event], "");
         assert_eq!(
             out.code, 0,
-            "hook `{event}` stub must fail-open (exit 0), never 1"
+            "hook `{event}` with no store configured must fail-open (exit 0), never 1"
         );
     }
 }
