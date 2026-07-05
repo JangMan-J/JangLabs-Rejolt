@@ -173,6 +173,41 @@ fn correlation_fire_logged_when_mark_persists_zerofire_when_not() {
     );
 }
 
+#[test]
+fn partial_mark_persistence_credits_only_the_persisted_memories() {
+    // Walk-back fix F4 (2026-07-04): a multi-memory fire where ONE memory's mark
+    // fails to persist must log a record crediting only the memories whose marks
+    // DID persist — never the failed one (which would be fired-but-unread from
+    // birth: log_read can never see it without a live mark; D25/A7).
+    //
+    // Failing mark: a memory id of 90 spaces percent-encodes to `m_` + 90×`%20`
+    // = 272 bytes > NAME_MAX (255) ⇒ ENAMETOOLONG on the mark file, while the
+    // sibling memory's mark persists normally. (Spaces are legal in a memory
+    // FILENAME as far as the A2(e) control-char exclusion is concerned — only
+    // \t/\n/\r exclude — so this is a reachable store state.)
+    let (tel, _run, _telp) = writable_telemetry("partial-mark", Config::default());
+    let long_id = " ".repeat(90);
+    let fire = a_fire(now(), "q-partial", &["gpu", long_id.as_str()]);
+
+    assert_eq!(
+        tel.log_fire(&fire),
+        FireOutcome::Logged,
+        "the fire still logs — the persisted memory earned its record"
+    );
+    assert!(tel.is_live("gpu"), "the good memory's mark persisted");
+    assert!(!tel.is_live(&long_id), "the hostile id's mark cannot exist");
+
+    let w = tel.read_window();
+    assert_eq!(w.fires.len(), 1, "exactly one fire record");
+    let credited: Vec<&str> = w.fires[0].mems.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(
+        credited,
+        vec!["gpu"],
+        "the record credits ONLY the persisted memory — a mark-failed memory \
+         logged as fired would be a write-time fired-but-unread (A7)"
+    );
+}
+
 // =============================================================================
 // Rotation (§8) + WR-04 `.1`-first read order
 // =============================================================================

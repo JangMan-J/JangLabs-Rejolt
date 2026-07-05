@@ -519,7 +519,12 @@ impl Telemetry {
     /// invariant is realized (WP-3 recall just calls this):
     ///
     /// 1. write the dedup mark for EACH memory the record credits (`record.mems`);
-    /// 2. append `record` ONLY if ≥1 of those marks persisted at write time.
+    /// 2. append the record crediting ONLY the memories whose own mark persisted
+    ///    at write time (walk-back fix F4, 2026-07-04 — per-memory, not any-mark:
+    ///    gating the whole record on ANY mark persisting logged a mark-failed
+    ///    memory as fired while `log_read` could never see it without a live
+    ///    mark — a WRITE-time fired-but-unread, exactly what A7's corrected
+    ///    wording forbids; the accepted A7 bias is only the LATER mark wipe).
     ///
     /// The marked set is derived from `record.mems` — not a separate argument — so
     /// the invariant is structural: a memory can never be credited as fired in the
@@ -533,16 +538,20 @@ impl Telemetry {
         if record.mems.is_empty() {
             return FireOutcome::ZeroFire;
         }
-        let mut any_mark = false;
-        for m in &record.mems {
-            if self.write_mark(&m.id) {
-                any_mark = true;
-            }
-        }
-        if !any_mark {
+        let persisted: Vec<FireMem> = record
+            .mems
+            .iter()
+            .filter(|m| self.write_mark(&m.id))
+            .cloned()
+            .collect();
+        if persisted.is_empty() {
             return FireOutcome::ZeroFire;
         }
-        let Ok(line) = serde_json::to_string(record) else {
+        let logged = FireRecord {
+            mems: persisted,
+            ..record.clone()
+        };
+        let Ok(line) = serde_json::to_string(&logged) else {
             return FireOutcome::AppendFailed;
         };
         if self.append_line(&line) {
