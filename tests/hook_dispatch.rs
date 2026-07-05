@@ -206,20 +206,49 @@ fn out_of_scope_frontmatter_write_fails_open() {
     );
     assert_eq!(out.code, 0, "a .yaml write is never a memory write");
 
-    // GOOD contrasts: the SAME invalid content in each WATCHED location denies.
+    // GOOD contrast: the SAME invalid content into the BOX store denies —
+    // shape authority applies only there (F25/CR-01).
     let in_store = f.store.join("bad.md");
     let out = f.hook("pre-op", &pre_op_write(&in_store, jekyll, &f.base));
     assert_eq!(out.code, 2, "the box store is watched: {}", out.stdout);
 
+    // Foreign WATCHED stores (project store, repo memory/) fail OPEN on
+    // non-dialect content (F25/CR-01: no grammar authority over foreign
+    // stores — the harness auto-memory format must save unimpeded)...
     let project_store = f.base.join(".claude/projects/-home-u-proj/memory/bad.md");
     let out = f.hook("pre-op", &pre_op_write(&project_store, jekyll, &f.base));
-    assert_eq!(out.code, 2, "a Claude project store is watched (D-14)");
+    assert_eq!(
+        out.code, 0,
+        "a non-dialect memory in a project store fails open (CR-01): {}",
+        out.stderr
+    );
 
     let repo_memory = f.base.join("some-repo/memory/bad.md");
     let out = f.hook("pre-op", &pre_op_write(&repo_memory, jekyll, &f.base));
     assert_eq!(
+        out.code, 0,
+        "a non-dialect memory in a repo memory/ dir fails open (CR-01)"
+    );
+
+    // ...but they ARE still watched: the placement gate fires there. A
+    // rejolt-dialect memory whose only grammar-known tag is box-placement,
+    // written into the project store, is denied as misplaced (D-15).
+    std::fs::write(
+        f.store.join("_grammar.toml"),
+        "grammar-version = 1\n\n[domain.boxonly]\ngloss = \"box-general facts\"\nplacement = \"box\"\ncommands = [\"hostnamectl\"]\n",
+    )
+    .unwrap();
+    let boxmem = "---\ndescription: a box general fact\nmetadata:\n  tags: [boxonly]\n---\nbody\n";
+    let out = f.hook("pre-op", &pre_op_write(&project_store, boxmem, &f.base));
+    assert_eq!(
         out.code, 2,
-        "a repo memory/ dir is watched (dark-memory class)"
+        "a box-placement memory misplaced into a project store denies: {}",
+        out.stdout
+    );
+    assert!(
+        out.stderr.contains("misplace") || out.stderr.contains("box"),
+        "the deny names the placement problem: {}",
+        out.stderr
     );
 }
 
