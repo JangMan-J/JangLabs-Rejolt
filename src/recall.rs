@@ -634,13 +634,16 @@ fn trigger_type_rank(trigger_type: &str) -> u8 {
 // =============================================================================
 
 /// A deterministic query id (the fire-record discriminator): FNV-1a/64 over the
-/// tool name + the sorted query buckets, `memq_`-prefixed. Stable across runs
-/// (fixed seed) so equal queries share a qid, distinct ones (with overwhelming
-/// probability) differ.
+/// tool name + ALL FOUR sorted query buckets, `memq_`-prefixed. Stable across
+/// runs (fixed seed) so equal queries share a qid, distinct ones (with
+/// overwhelming probability) differ. The synonyms bucket participates (walk-back
+/// fix F6, 2026-07-04): WebSearch/WebFetch/context7 queries route through
+/// synonyms ONLY, so omitting it collapsed every distinct web query to one qid
+/// per tool — falsifying this function's own distinct-queries-differ contract.
 fn compute_query_id(tool_name: &str, walk: &WalkQuery) -> String {
     let mut h = Fnv::new();
     h.field(tool_name.as_bytes());
-    for bucket in [&walk.commands, &walk.paths, &walk.args] {
+    for bucket in [&walk.commands, &walk.paths, &walk.args, &walk.synonyms] {
         let mut sorted = bucket.clone();
         sorted.sort();
         h.update(&(sorted.len() as u64).to_le_bytes());
@@ -723,6 +726,34 @@ fn civil_to_days(y: i64, m: i64, d: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_id_discriminates_synonym_only_queries() {
+        // Walk-back fix F6: web/context7 queries route through the synonyms
+        // bucket ONLY — two distinct queries must not share a qid.
+        let q1 = WalkQuery {
+            synonyms: vec!["vram".into(), "nvidia".into()],
+            ..Default::default()
+        };
+        let q2 = WalkQuery {
+            synonyms: vec!["postgres".into()],
+            ..Default::default()
+        };
+        assert_ne!(
+            compute_query_id("WebSearch", &q1),
+            compute_query_id("WebSearch", &q2),
+            "synonym-only queries must be discriminated by qid"
+        );
+        // Equal queries still share a qid (order-insensitive within a bucket).
+        let q1_rev = WalkQuery {
+            synonyms: vec!["nvidia".into(), "vram".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            compute_query_id("WebSearch", &q1),
+            compute_query_id("WebSearch", &q1_rev)
+        );
+    }
 
     #[test]
     fn surface_gate_matrix() {
