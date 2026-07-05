@@ -47,7 +47,7 @@ use crate::index::{Hit, WalkQuery, routing_key};
 use crate::normalize::{NormalizedOp, ToolOp, canonicalize_lexical, tokenize_bash};
 use crate::rebuild::{index_path, report_path};
 use crate::telemetry::{FireMem, FireOutcome, FireRecord, Telemetry};
-use crate::tier::Tier;
+use crate::tier::{Axis, Tier};
 
 // =============================================================================
 // §10 tunables — forms frozen (§2), magnitudes from Config (WP-7) or const
@@ -620,13 +620,19 @@ fn representative_citation(m: &SurfacedMemory) -> &Citation {
 }
 
 /// Rank a trigger type by tier (strong 2, medium 1, weak 0) for representative
-/// selection.
+/// selection — DERIVED from the one type→tier map ([`Axis::tier`], Appendix A's
+/// "one module, column generated from it"), not a second inline copy of it
+/// (walk-back fix F11, 2026-07-04: a tier-map change must move this rank too).
 fn trigger_type_rank(trigger_type: &str) -> u8 {
-    match trigger_type {
-        "command" | "path" => 2,
-        "arg" => 1,
-        _ => 0,
-    }
+    Axis::ALL
+        .iter()
+        .find(|a| a.trigger_type_str() == trigger_type)
+        .map(|a| match a.tier() {
+            Tier::Strong => 2,
+            Tier::Medium => 1,
+            Tier::Weak => 0,
+        })
+        .unwrap_or(0)
 }
 
 // =============================================================================
