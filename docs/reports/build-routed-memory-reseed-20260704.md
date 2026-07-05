@@ -63,8 +63,14 @@ never closes it — the observation is the evidence):
 > Observed by the /ship session (agent-run probe — the plan batched this as
 > human-only, but it proved autonomously observable with no host-config
 > mutation: probe hook + settings lived in a scratch dir, passed via
-> `--settings`). Owner may re-confirm interactively at will; the mechanism is
-> identical.
+> `--settings`).
+>
+> **Owner confirmation: 2026-07-04 — CONFIRMED.** The probe was re-run at the
+> owner's request (fresh session in `~/rb1b-probe`, matcher `Bash`, one
+> deliberate `touch`); the owner directly reviewed the output — the
+> `RB1B-PROBE: deliberate deny (exit 2)` block line and the absent `touch`
+> target — and answered yes. RB1(b) is closed as an owner-confirmed
+> observation: blocked = **yes**.
 
 ## WP → commit map
 
