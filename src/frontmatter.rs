@@ -742,9 +742,15 @@ fn parse_double_quoted(tok: &str, lineno: usize) -> Result<String, FrontmatterEr
                 Some('r') => out.push('\r'),
                 Some('"') => out.push('"'),
                 Some('\\') => out.push('\\'),
-                // Only the escapes `generate` emits are in-subset; anything else
-                // (`\xNN`, `\uNNNN`, `\0`, …) is rejected rather than silently
-                // mangled into a divergence from PyYAML.
+                // `\/` is a pure no-op escape (JSON habit) that PyYAML accepts
+                // as `/` — denying it was a false-deny vs the named oracle
+                // (walk-back fix F14, 2026-07-04; RB3: false-deny is the #1
+                // violation).
+                Some('/') => out.push('/'),
+                // Only the escapes `generate` emits (plus the no-op `\/`) are
+                // in-subset; anything else (`\xNN`, `\uNNNN`, `\0`, …) is
+                // rejected rather than silently mangled into a divergence from
+                // PyYAML — the parser does not DECODE those forms.
                 Some(_) => return Err(FrontmatterError::InvalidEscape { line: lineno }),
             },
             Some('"') => {
@@ -1027,6 +1033,17 @@ fn emit_double_quoted(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn solidus_escape_is_accepted_like_the_oracle() {
+        // Walk-back fix F14: PyYAML accepts `"\/"` as `/`; denying it was a
+        // false-deny vs the named oracle (RB3 #1 rule). Decoding escapes
+        // (`\x41`) stay rejected — the parser does not decode them.
+        let fm = parse("---\ndescription: \"path\\/to\"\nmetadata:\n  tags: [x]\n---\n").unwrap();
+        assert_eq!(fm.description.as_deref(), Some("path/to"));
+        let err = parse("---\nname: \"a\\x41b\"\nmetadata:\n  tags: [x]\n---\n").unwrap_err();
+        assert!(matches!(err, FrontmatterError::InvalidEscape { .. }));
+    }
 
     #[test]
     fn minimal_frontmatter_parses() {
