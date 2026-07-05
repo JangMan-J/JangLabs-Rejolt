@@ -109,7 +109,21 @@ fn is_write_tool(tool_name: &str) -> bool {
 /// The hook entry: resolve the store, apply the kill-switch, parse stdin, and
 /// dispatch per `event`. Returns the process exit code (A5 taxonomy: 0 / 2
 /// only, never 1).
+///
+/// The whole dispatch runs under a panic net (walk-back fix F15, 2026-07-04):
+/// a panic anywhere in the tree previously escaped as exit 101 + a backtrace
+/// on stderr — non-SILENT fail-open, deviating from A5(b) (and the panic class
+/// is proven reachable: the WP-6 verify pass caught a live seat-gate panic).
+/// Hook mode installs a no-op panic hook (so nothing reaches stderr) and
+/// `catch_unwind` maps any panic to a quiet [`EXIT_OK`] allow — an unexpected
+/// engine fault must never block, and on hook paths must never speak (D6,
+/// A5(b), N13). Direct CLIs keep the default loud panic behavior.
 pub fn dispatch(event: HookEvent) -> i32 {
+    std::panic::set_hook(Box::new(|_| {})); // hook mode: a panic says nothing
+    std::panic::catch_unwind(|| dispatch_inner(event)).unwrap_or(EXIT_OK)
+}
+
+fn dispatch_inner(event: HookEvent) -> i32 {
     let Some((store, config)) = resolve_store() else {
         return EXIT_OK; // no configured store -> nothing to act on, fail-open
     };
