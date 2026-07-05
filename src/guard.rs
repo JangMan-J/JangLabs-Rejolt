@@ -564,13 +564,25 @@ fn dedup_stopwords() -> &'static BTreeSet<&'static str> {
 
 /// The correct box path if the memory is high-confidence misplaced, else `None`
 /// (fail open). Denies ONLY when the memory has ≥1 grammar-known tag, ALL grammar-
-/// known tags carry `placement: box`, a box root is configured, and the target does
-/// not resolve under it. Unknown/mixed/`project`/`either` placement fails open.
+/// known tags carry `placement: box`, a box root is configured, the target does
+/// not resolve under it, AND the target is a RECOGNIZED non-box memory location
+/// (a Claude project store or a repo `memory/` dir). Unknown/mixed/`project`/
+/// `either` placement fails open — and so does an `other` target (walk-back fix
+/// F24, 2026-07-04): the ground-truth engine's `_classify_target` runs the
+/// placement gate only for `project-store`/`repo-memory` classes and passes
+/// `other` targets through unchanged ("no grammar authority, no gate",
+/// `memory_surface.py:1663`). Without this, `check-write --target` on an
+/// arbitrary out-of-store path denied where the proven boundary allows.
 fn misplacement_box_path(fm: &Frontmatter, target: &Path, cfg: &GuardConfig) -> Option<String> {
     let box_root = cfg.roots.box_root.as_ref()?; // no box root wired → fail open
     // A valid grammar is required to trust placements; an invalid one fails open.
     let grammar_text = std::fs::read_to_string(&cfg.grammar_path).ok()?;
     let grammar = grammar::parse_and_validate(&grammar_text).ok()?;
+    // `other` targets (neither box — checked below — nor a recognized non-box
+    // memory location) fail open before any placement reasoning.
+    if !is_recognized_non_box_store(target) && !target_under(target, box_root) {
+        return None;
+    }
 
     let known: Vec<Placement> = fm
         .metadata
@@ -612,6 +624,23 @@ fn target_under(target: &Path, root: &Path) -> bool {
     let t = engine_realpath(target);
     let r = engine_realpath(root);
     t == r || t.starts_with(&r)
+}
+
+/// Whether `target` is a RECOGNIZED non-box memory location (the ground-truth
+/// `_classify_target` `project-store`/`repo-memory` classes, D-14): an
+/// engine-realpath-normalized `.md` whose parent chain carries a `memory`
+/// component (`…/.claude/projects/<key>/memory/…` is a subset of that match).
+/// Everything else is `other` — no grammar authority, no gate (F24).
+fn is_recognized_non_box_store(target: &Path) -> bool {
+    let t = engine_realpath(target);
+    let Some(name) = t.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    if !name.ends_with(".md") {
+        return false;
+    }
+    t.parent()
+        .is_some_and(|dir| dir.components().any(|c| c.as_os_str() == "memory"))
 }
 
 // =============================================================================

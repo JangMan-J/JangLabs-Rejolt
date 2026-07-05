@@ -239,11 +239,17 @@ fn misplacement_denies_all_box_to_non_box_allows_mixed_and_box_target() {
     let store = setup("misplace", PLACEMENT_GRAMMAR, &[]);
     let box_root = fs::canonicalize(&store).unwrap();
     let c = cfg(&store, Some(box_root));
-    let outside = unique_dir("outside");
+    // A RECOGNIZED non-box memory location (the `repo-memory` class, F24): the
+    // placement gate applies here, per the ground-truth `_classify_target`.
+    let repo_memory = unique_dir("outside").join("some-repo").join("memory");
+    fs::create_dir_all(&repo_memory).unwrap();
+    // An `other` target: no `memory` component — no grammar authority, no gate.
+    let other = unique_dir("other-dir");
 
-    // DENY: all grammar-known tags are box-placement, written OUTSIDE the box store.
+    // DENY: all grammar-known tags are box-placement, written to a RECOGNIZED
+    // non-box store (repo memory/ dir).
     let boxmem = "---\ndescription: a box general fact\nmetadata:\n  tags: [boxonly]\n---\nbody\n";
-    let v = full_write(&store, &outside.join("mem.md"), boxmem, &c);
+    let v = full_write(&store, &repo_memory.join("mem.md"), boxmem, &c);
     assert_deny(&v, "misplacement");
     if let GuardVerdict::Deny(DenyReason::Misplacement { correct_box_path }) = &v {
         assert!(
@@ -252,10 +258,19 @@ fn misplacement_denies_all_box_to_non_box_allows_mixed_and_box_target() {
         );
     }
 
-    // ALLOW near-miss: mixed placement (box + either) → fails open, even to non-box.
+    // ALLOW: the SAME all-box memory at an `other` target fails open (F24 —
+    // ground truth: 'other' targets are unchanged pass-through,
+    // memory_surface.py:1663; pre-fix this was wrongly denied).
+    assert!(
+        full_write(&store, &other.join("mem.md"), boxmem, &c).is_allow(),
+        "an `other` target has no grammar authority — the placement gate must not fire"
+    );
+
+    // ALLOW near-miss: mixed placement (box + either) → fails open, even in a
+    // recognized non-box store.
     let mixed = "---\ndescription: mixed placement note\nmetadata:\n  tags: [boxonly, ripgrep]\n---\nbody\n";
     assert!(
-        full_write(&store, &outside.join("mixed.md"), mixed, &c).is_allow(),
+        full_write(&store, &repo_memory.join("mixed.md"), mixed, &c).is_allow(),
         "mixed/either placement must fail open"
     );
 

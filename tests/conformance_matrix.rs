@@ -555,16 +555,33 @@ fn engine_realpath_containment_blocks_symlink_based_escape() {
     );
 
     // BAD: a target reached THROUGH the escaping symlink is lexically prefixed
-    // by the box root's path, but realpath resolves it OUTSIDE — misplacement
-    // must fire, proving containment is not fooled by the lexical prefix.
-    let escape_target = box_root.join("escape").join("leak.md");
+    // by the box root's path, but realpath resolves it OUTSIDE — into a
+    // RECOGNIZED non-box store (a repo `memory/` dir), where misplacement must
+    // fire. This proves containment is realpath, not lexical prefix: a lexical
+    // check would see the target as in-box (correctly placed) and allow.
+    fs::create_dir_all(outside.join("some-repo").join("memory")).unwrap();
+    let escape_target = box_root
+        .join("escape")
+        .join("some-repo")
+        .join("memory")
+        .join("leak.md");
     match check_write(&box_root, &escape_target, boxmem, true, &cfg) {
         GuardVerdict::Deny(reason) => assert_eq!(reason.code(), "misplacement"),
         other => panic!(
-            "a target that escapes the box root via a symlink must be denied as \
+            "a symlink escape into a recognized non-box store must be denied as \
              misplaced (realpath containment), got {other:?}"
         ),
     }
+
+    // An escape into an `other` (unrecognized) location fails open — the
+    // ground-truth engine's `_classify_target` passes `other` targets through
+    // unchanged (F24; memory_surface.py:1663). Containment still held: the
+    // target was NOT treated as in-box, it was classified by its REAL location.
+    let other_target = box_root.join("escape").join("leak.md");
+    assert!(
+        check_write(&box_root, &other_target, boxmem, true, &cfg).is_allow(),
+        "an escape to an unrecognized location is `other` — no gate (F24)"
+    );
 }
 
 // =============================================================================
