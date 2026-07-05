@@ -243,8 +243,44 @@ pub fn load(path: &Path) -> Result<LoadedConfig, ConfigError> {
     // (exit-2). Unknown keys are ignored by serde (no deny_unknown_fields) and are
     // surfaced as warnings below.
     let config: Config = toml::from_str(&text).map_err(|e| ConfigError::Parse(e.to_string()))?;
-    let warnings = unknown_key_warnings(&text, &config);
+    let mut warnings = unknown_key_warnings(&text, &config);
+    warnings.extend(const_consumed_override_warnings(&config));
     Ok(LoadedConfig { config, warnings })
+}
+
+/// Advisory lines for KNOWN config keys whose consumers are (still) compile-time
+/// consts in v1 — an override parses fine but has zero effect, the exact silent
+/// tunable-divergence trap D25 documents (walk-back fix F9, 2026-07-04). One
+/// line per overridden-but-inert key, so the operator learns it on the loud
+/// direct-CLI path instead of by observing nothing change.
+fn const_consumed_override_warnings(config: &Config) -> Vec<String> {
+    let d = Config::default();
+    let mut w = Vec::new();
+    let mut note = |key: &str, consumer: &str| {
+        w.push(format!(
+            "config: `{key}` is consumed as a compile-time constant in v1 ({consumer}) — \
+             this override parses but has NO effect"
+        ));
+    };
+    if config.collision_guide_floor != d.collision_guide_floor {
+        note("collisionGuideFloor", "projection::COLLISION_GUIDE_FLOOR");
+    }
+    if (config.dedup_backstop_threshold - d.dedup_backstop_threshold).abs() > f64::EPSILON {
+        note(
+            "DEDUP_BACKSTOP_THRESHOLD",
+            "guard::DEDUP_BACKSTOP_THRESHOLD",
+        );
+    }
+    if config.write_context_budget != d.write_context_budget {
+        note("WRITE_CONTEXT_BUDGET", "guard::WRITE_CONTEXT_BUDGET");
+    }
+    if config.bench_budget_ms != d.bench_budget_ms {
+        note(
+            "BUDGET_MS",
+            "superseded by the A4 calibrated design budget; consumed by nothing",
+        );
+    }
+    w
 }
 
 /// Load `config.toml` for the HOOK path (fail-open, silent): a missing, malformed,
@@ -308,6 +344,32 @@ fn collect_unknown_keys(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn const_consumed_overrides_warn_loudly() {
+        // Walk-back fix F9 (D25 divergence pattern): overriding a key whose
+        // consumer is a compile-time const must WARN on the direct-CLI path.
+        let overridden: Config = toml::from_str(
+            "collisionGuideFloor = 12\nDEDUP_BACKSTOP_THRESHOLD = 0.5\n\
+             WRITE_CONTEXT_BUDGET = 100\nBUDGET_MS = 30\n",
+        )
+        .unwrap();
+        let w = const_consumed_override_warnings(&overridden);
+        assert_eq!(w.len(), 4, "all four inert overrides warn: {w:?}");
+        for key in [
+            "collisionGuideFloor",
+            "DEDUP_BACKSTOP_THRESHOLD",
+            "WRITE_CONTEXT_BUDGET",
+            "BUDGET_MS",
+        ] {
+            assert!(
+                w.iter().any(|l| l.contains(key)),
+                "a warning names `{key}`: {w:?}"
+            );
+        }
+        // GOOD contrast: defaults (or an absent key) warn about nothing.
+        assert!(const_consumed_override_warnings(&Config::default()).is_empty());
+    }
 
     #[test]
     fn frozen_defaults() {
