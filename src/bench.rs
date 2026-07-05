@@ -191,9 +191,18 @@ pub struct Baseline {
 impl Baseline {
     /// Load a baseline from `path`. `None` on a missing/unparseable file (→ the gate
     /// reads NOBASELINE — measure-only).
+    ///
+    /// Walk-back fix F7 (2026-07-04, A4(e)): a PARSEABLE baseline carrying
+    /// non-finite or negative magnitudes (TOML accepts `nan`/`inf`) is nonsense,
+    /// not a gate input — `nan > 0.0` is false, so a NaN slack would silently
+    /// disarm REGRESSED, and an `inf` budget silently never WARNs. Such a file
+    /// loads as `None`, landing on the LOUD NOBASELINE advisory instead of a
+    /// silent degrade.
     pub fn load(path: &Path) -> Option<Baseline> {
         let text = fs::read_to_string(path).ok()?;
-        toml::from_str(&text).ok()
+        let b: Baseline = toml::from_str(&text).ok()?;
+        let sane = |v: f64| v.is_finite() && v >= 0.0;
+        (sane(b.p95_ms) && sane(b.design_budget_ms) && sane(b.ceiling_slack_ms)).then_some(b)
     }
 
     /// Write the baseline as reviewable TOML (with a header comment).
@@ -810,6 +819,36 @@ mod tests {
         assert_eq!(updated.design_budget_ms, 12.0, "same-env budget carries");
         assert_eq!(updated.ceiling_slack_ms, 0.5, "same-env slack carries");
 
+        let _ = std::fs::remove_dir_all(&store);
+    }
+
+    #[test]
+    fn baseline_load_rejects_non_finite_or_negative_magnitudes() {
+        // Walk-back fix F7 (A4e): TOML parses nan/inf; a baseline carrying them
+        // must load as None (→ LOUD NOBASELINE), never silently disarm the gate.
+        let store = std::env::temp_dir().join(format!("rejolt-bench-f7-{}", std::process::id()));
+        std::fs::create_dir_all(&store).unwrap();
+        let p = baseline_path(&store);
+        let write = |slack: &str| {
+            std::fs::write(
+                &p,
+                format!(
+                    "p95_ms = 1.0\ndesign_budget_ms = 10.0\nceiling_slack_ms = {slack}\n\
+                     [env]\ncpu_model = \"c\"\ngovernor = \"g\"\npower_source = \"AC\"\nkernel = \"k\"\n"
+                ),
+            )
+            .unwrap();
+        };
+        for bad in ["nan", "inf", "-1.0"] {
+            write(bad);
+            assert!(
+                Baseline::load(&p).is_none(),
+                "ceiling_slack_ms = {bad} must not load as a gate input"
+            );
+        }
+        // GOOD contrast: a sane baseline still loads.
+        write("0.5");
+        assert!(Baseline::load(&p).is_some(), "a finite baseline loads");
         let _ = std::fs::remove_dir_all(&store);
     }
 
