@@ -543,7 +543,8 @@ fn calibrate_and_write(
 }
 
 /// `--update-baseline` (§9): rewrite the REGRESSION baseline (real-store p95 + the
-/// current env fingerprint), preserving a prior calibration's design budget + slack.
+/// current env fingerprint), preserving a prior calibration's design budget + slack
+/// ONLY within the same gate-key environment.
 ///
 /// FIX 5 (A4a): the `design_budget_ms` comes ONLY from `--calibrate` (synthetic-1000
 /// p95 × 3.0). With no prior calibration it is left **inert** (`0.0`) — NEVER
@@ -551,21 +552,38 @@ fn calibrate_and_write(
 /// otherwise write a sub-millisecond budget that spuriously WARNs every real run.
 /// An inert (`0.0`) budget never trips WARN (see [`verdict_of`]); only the regression
 /// ceiling gates until `--calibrate` runs.
+///
+/// Walk-back fix F5 (2026-07-04, A4(d)/(e)): the prior budget/slack are carried
+/// forward ONLY when the prior baseline's env fingerprint matches the current
+/// gate key. Carrying them across an env change would stamp the CURRENT
+/// fingerprint onto magnitudes measured under a DIFFERENT one — laundering a
+/// stale-env calibration past the very mismatch detector A4(d) installs, and
+/// silently at that (the A4(e) conformance failure). Env changed ⇒ both go
+/// inert (`0.0`, gate measure-only per the N14 rule) with a LOUD line naming
+/// the recalibration step.
 fn update_baseline_write(store: &Path, p95: f64) -> std::io::Result<String> {
     let prior = Baseline::load(&baseline_path(store));
+    let env = EnvFingerprint::detect();
+    let env_matches = prior.as_ref().is_some_and(|b| b.env.matches(&env));
     let (budget, slack) = match &prior {
-        Some(b) => (b.design_budget_ms, b.ceiling_slack_ms),
-        None => (0.0, 0.0), // inert until --calibrate derives it from synthetic-1000 (A4a)
+        Some(b) if env_matches => (b.design_budget_ms, b.ceiling_slack_ms),
+        // env changed or no prior: inert until --calibrate re-derives (A4a/d/e)
+        _ => (0.0, 0.0),
     };
     let baseline = Baseline {
         p95_ms: p95,
         design_budget_ms: budget,
         ceiling_slack_ms: slack,
-        env: EnvFingerprint::detect(),
+        env,
     };
     baseline.write(&baseline_path(store))?;
     let budget_note = if budget > 0.0 {
         format!("design budget {budget:.2} ms (from a prior calibration) preserved")
+    } else if prior.is_some() && !env_matches {
+        "environment fingerprint CHANGED since the prior calibration — its budget/slack \
+         were measured under a different environment and are left INERT (measure-only); \
+         run `--calibrate` under THIS environment (A4d/e)"
+            .to_string()
     } else {
         "design budget left INERT — run `--calibrate` to derive it from synthetic-1000 (A4a)"
             .to_string()
@@ -729,6 +747,71 @@ impl Drop for SyntheticStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_baseline_carries_calibration_only_within_the_same_env() {
+        // Walk-back fix F5 (A4d/e): a prior calibration's budget/slack survive
+        // `--update-baseline` ONLY when the prior env fingerprint matches the
+        // current gate key; across an env change they go inert (0.0) — carrying
+        // them forward would stamp the current fingerprint onto magnitudes
+        // measured under a different environment, disarming the A4(d) mismatch
+        // detector silently.
+        let store = std::env::temp_dir().join(format!(
+            "rejolt-bench-f5-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&store).unwrap();
+
+        // BAD: prior calibrated under a DIFFERENT env → budget/slack inert + loud.
+        let other_env = EnvFingerprint {
+            cpu_model: "some-other-cpu".into(),
+            governor: "performance".into(),
+            power_source: "battery".into(),
+            kernel: "k".into(),
+        };
+        Baseline {
+            p95_ms: 1.0,
+            design_budget_ms: 12.0,
+            ceiling_slack_ms: 0.5,
+            env: other_env,
+        }
+        .write(&baseline_path(&store))
+        .unwrap();
+        let loud = update_baseline_write(&store, 2.0).unwrap();
+        let updated = Baseline::load(&baseline_path(&store)).unwrap();
+        assert_eq!(
+            updated.design_budget_ms, 0.0,
+            "cross-env budget must not carry"
+        );
+        assert_eq!(
+            updated.ceiling_slack_ms, 0.0,
+            "cross-env slack must not carry"
+        );
+        assert!(
+            loud.contains("CHANGED"),
+            "the degradation must be named LOUDLY (A4e): {loud}"
+        );
+
+        // GOOD: prior calibrated under the SAME env → budget/slack preserved.
+        Baseline {
+            p95_ms: 1.0,
+            design_budget_ms: 12.0,
+            ceiling_slack_ms: 0.5,
+            env: EnvFingerprint::detect(),
+        }
+        .write(&baseline_path(&store))
+        .unwrap();
+        let _ = update_baseline_write(&store, 2.0).unwrap();
+        let updated = Baseline::load(&baseline_path(&store)).unwrap();
+        assert_eq!(updated.design_budget_ms, 12.0, "same-env budget carries");
+        assert_eq!(updated.ceiling_slack_ms, 0.5, "same-env slack carries");
+
+        let _ = std::fs::remove_dir_all(&store);
+    }
 
     #[test]
     fn regression_ceiling_is_baseline_plus_calibrated_slack_only() {
