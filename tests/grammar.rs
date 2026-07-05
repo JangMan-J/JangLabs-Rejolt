@@ -72,6 +72,7 @@ fn known_bads_distinct_classifiable_errors() {
             "synonyms-only" => matches!(&err, GrammarError::NoEvidence { .. }),
             "blank-evidence" => matches!(&err, GrammarError::InvalidEvidence { .. }),
             "newline-in-gloss" => matches!(&err, GrammarError::MultilineGloss { .. }),
+            "bad-tag-name" => matches!(&err, GrammarError::InvalidTagName { .. }),
             other => panic!("unmapped grammar bad fixture `{other}`"),
         };
         assert!(ok, "grammar bad `{stem}`: unexpected error {err:?} ({err})");

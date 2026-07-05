@@ -179,6 +179,16 @@ pub enum GrammarError {
         /// The offending tag name.
         tag: String,
     },
+    /// A facet tag NAME is not `TAG_RE`-shaped (kebab-case; D21/D22, plan
+    /// Appendix A "TAG_RE conformance at validate"). A non-kebab grammar tag is
+    /// dead vocabulary — memory `metadata.tags` are kebab-enforced, so nothing
+    /// can ever be a member of it (walk-back fix F16, 2026-07-04).
+    InvalidTagName {
+        /// Facet the tag lives under.
+        facet: &'static str,
+        /// The offending tag name.
+        tag: String,
+    },
 }
 
 impl GrammarError {
@@ -219,6 +229,11 @@ impl fmt::Display for GrammarError {
                     "tag `{facet}.{tag}` has a multiline gloss (must be one line)"
                 )
             }
+            GrammarError::InvalidTagName { facet, tag } => write!(
+                f,
+                "tag name `{facet}.{tag}` is not kebab-case (TAG_RE) — memory tags are \
+                 kebab-enforced, so this tag can never have a member"
+            ),
         }
     }
 }
@@ -269,6 +284,15 @@ pub fn validate_grammar(g: &Grammar) -> Result<(), GrammarError> {
         ("pattern", &g.pattern),
     ] {
         for (tag, entry) in map {
+            // Tag NAME shape (F16; Appendix A "TAG_RE conformance at validate"):
+            // a non-kebab tag name is dead vocabulary — kebab-enforced memory
+            // tags can never be a member of it.
+            if !crate::tag::is_tag(tag) {
+                return Err(GrammarError::InvalidTagName {
+                    facet,
+                    tag: tag.clone(),
+                });
+            }
             if entry.gloss.trim().is_empty() {
                 return Err(GrammarError::EmptyGloss {
                     facet,
@@ -361,6 +385,9 @@ pub fn error_signatures(text: &str) -> BTreeSet<String> {
         ("pattern", &g.pattern),
     ] {
         for (tag, entry) in map {
+            if !crate::tag::is_tag(tag) {
+                sigs.insert(format!("bad-tag-name:{facet}.{tag}"));
+            }
             if entry.gloss.trim().is_empty() {
                 sigs.insert(format!("empty-gloss:{facet}.{tag}"));
             }
