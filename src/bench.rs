@@ -671,6 +671,11 @@ fn throwaway_telemetry(config: &Config) -> Telemetry {
 /// Measure the store telemetry byte count + day-span (for the R7 rate). Reads the
 /// live file + its `.1` rotation. `None` when there is no telemetry or the span is
 /// unmeasurable.
+///
+/// Walk-back fix F8 (2026-07-04): byte-read + per-line `from_utf8_lossy`, the
+/// same corruption-bounding the WP-2b reader uses — `read_to_string` errored on
+/// ONE invalid-UTF-8 byte and silently dropped the WHOLE generation from the
+/// rate, skewing the R7 `_TEL_MAX` recommendation.
 fn measure_tel_rate(store: &Path) -> Option<(u64, f64)> {
     let tel = telemetry_path(store);
     let mut rot = tel.clone().into_os_string();
@@ -681,12 +686,13 @@ fn measure_tel_rate(store: &Path) -> Option<(u64, f64)> {
     let mut min_ts = i64::MAX;
     let mut max_ts = i64::MIN;
     for f in &files {
-        let Ok(text) = fs::read_to_string(f) else {
+        let Ok(bytes) = fs::read(f) else {
             continue;
         };
-        total_bytes += text.len() as u64;
-        for line in text.lines() {
-            if let Some(ts) = extract_ts(line) {
+        total_bytes += bytes.len() as u64;
+        for raw in bytes.split(|&b| b == b'\n') {
+            let line = String::from_utf8_lossy(raw);
+            if let Some(ts) = extract_ts(&line) {
                 min_ts = min_ts.min(ts);
                 max_ts = max_ts.max(ts);
             }
