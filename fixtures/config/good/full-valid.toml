@@ -1,0 +1,26 @@
+# A full, valid config.toml with every §10 key present (known-good G2 fixture).
+confidenceHighThreshold = 10
+confidenceMediumThreshold = 6
+collisionGuideFloor = 8
+promoteThreshold = 0.4
+demoteThreshold = 0.05
+telemetryWindowDays = 30
+minEvidenceSessions = 10
+minEvidenceDays = 30
+seatPromoteMinFires = 5
+dedupeTtlSeconds = 900
+_TEL_MAX = 1048576
+maxResults = 3
+maxDescriptionChars = 220
+WRITE_CONTEXT_BUDGET = 9500
+DEDUP_BACKSTOP_THRESHOLD = 0.85
+BUDGET_MS = 55
+grammarPath = "/srv/lab/_grammar.toml"
+
+[tierWeights]
+strong = 10
+medium = 6
+weak = 3
+
+[storeRoots]
+boxRoot = "/home/user/box"

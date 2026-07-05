@@ -1,0 +1,6 @@
+grammar-version = 1
+
+[domain.multi]
+gloss = "line one\nline two"
+placement = "box"
+commands = ["x"]

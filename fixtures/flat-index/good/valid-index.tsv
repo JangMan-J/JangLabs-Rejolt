@@ -1,0 +1,3 @@
+# rejolt-flat-index	generation=abc123	sourceFingerprint=def456	schemaVersion=1
+byCommand	nvidia-smi	gpu-tools	t	gpu	command	strong		2026-07-04	0	gpu,vram	/store/gpu.md	GPU and VRAM
+byPath	**/*.md	docs	m	docs	path	strong			0	docs	/store/docs.md	docs snippet

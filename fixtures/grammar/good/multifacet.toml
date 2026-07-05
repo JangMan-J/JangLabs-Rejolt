@@ -1,0 +1,21 @@
+grammar-version = 1
+
+[domain.gpu-tools]
+gloss = "GPU and VRAM diagnostics"
+placement = "box"
+commands = ["nvidia-smi"]
+paths = ["~/.config/gpu/**"]
+args = ["--no-cache"]
+synonyms = ["vram"]
+related = ["display"]
+
+[tool.ripgrep]
+gloss = "ripgrep structural search"
+placement = "either"
+commands = ["rg"]
+synonyms = ["grep"]
+
+[pattern.atomic-write]
+gloss = "atomic write-temp-then-rename"
+placement = "project"
+paths = ["*.tmp"]

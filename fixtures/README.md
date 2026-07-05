@@ -1,0 +1,70 @@
+# fixtures/
+
+Conformance fixtures for the `rejolt` engine, laid out to enforce **G2**
+(`WORKFLOW.md` §6): *a conformance check's verdict does not count until it has
+failed a known-bad fixture AND passed a known-good one.*
+
+## Layout convention (every packet follows this)
+
+```
+fixtures/<area>/good/   # conformant inputs — the check MUST accept each
+fixtures/<area>/bad/    # non-conformant inputs — the check MUST reject each
+```
+
+- `<area>` names the check family (e.g. `frontmatter`, `flat-index`,
+  `write-guard`). Pick one area per conformance surface.
+- Every regular file directly under `good/` or `bad/` is one fixture. The G2
+  harness (`rejolt::conformance`) lists them non-recursively and sorted.
+- **A check with no `bad/` fixture (or no `good/` fixture) does not count** —
+  the harness returns `Verdict::Undisciplined`. Landing a check means landing
+  its known-good *and* its known-bad fixture in the same packet.
+- The predicate convention is: `true` = the check accepts the fixture,
+  `false` = it rejects it. Good fixtures must be accepted; bad fixtures must be
+  rejected.
+
+## Areas
+
+- `selftest/` — WP-0's proof that the harness itself works. `good/nonempty.txt`
+  is non-empty; `bad/empty.txt` is a zero-byte file. The reference check
+  ("fixture file is non-empty") accepts the good and rejects the bad, so its
+  verdict counts. See `tests/conformance_selftest.rs`. Do not repurpose this
+  area — later packets add their own.
+- `frontmatter/` — WP-1 (P2). The bespoke constrained-YAML dialect (D21, A3).
+  `good/` are in-subset memory frontmatters (the §3 worked example, flow/block
+  sequences, quoted scalars, ranking fields, a minimal one); `bad/` is one
+  fixture per Appendix B2 reject rule (anchors, aliases, type tags,
+  multi-document, block scalars, flow mappings, multiline strings, tab
+  indentation, duplicate keys, top-level `triggers:`, unknown keys) plus the
+  D21 schema rejects (missing/empty/invalid tags, missing fences). The check
+  `frontmatter-parse-valid` accepts iff parse + schema validation succeeds.
+  Bads double as the vector-corpus oracle (each maps to its named error). See
+  `tests/frontmatter.rs`.
+- `grammar/` — WP-1 (P3). The serde-typed `grammar.toml` loader (D22, D23, D3,
+  A6). `good/` = a valid multi-facet grammar and the empty seed (version line
+  alone); `bad/` = the RB5 corpus (fourth facet table, duplicate-facet tag,
+  synonyms-only tag, bad/missing `grammar-version`, bad `placement`, unknown
+  entry field), each rejected as an exit-2 config/taxonomy error. The check
+  `grammar-load-valid` accepts iff parse + validate succeeds. See
+  `tests/grammar.rs`.
+- `flat-index/` — WP-2 (P5). The flat recall-index loader (Appendix A; D24, A2,
+  A3). `good/` = a well-formed index file (metadata header + valid 13-column
+  records) and an empty index (header alone); `bad/` = malformed index files
+  (missing header, wrong column count, unknown table name, non-integer
+  `declineCount`, bad `source` token). The check `index-record-parse-valid`
+  accepts iff the metadata header parses AND every non-comment line is a valid
+  record — exactly the reader's index-side parse. The build-side risk-register
+  rows (RB2 one-record-per-line under hostile content, RB4 torn-pair, RB9
+  recall ≡ projection, RB11 byPath glob, key normalization, atomicity, drift
+  guardrail) are explicit good-passes/bad-fails assertions over temp stores. See
+  `tests/flat_index.rs`.
+- `telemetry/` — WP-2b (P11). The marks + telemetry primitive (D25, A7, R7, §8).
+  `good/` = a well-formed telemetry JSONL (fire + read + session records with
+  integer ts) the window reader parses to ≥1 record; `bad/` = fire + read
+  records whose ts is unparseable, which the window reader drops symmetrically
+  (WR-05) to zero records. The check `telemetry-window-has-records` accepts iff
+  `Telemetry::read_window` yields ≥1 fire/read (far-future ts keeps the good
+  fixture in-window forever — no aging flakiness). The behavioral rows
+  (correlation gating + zero-fire, rotation + `.1`-first read order, mark-dir
+  writability + inert advisory, bad-ts symmetry, TTL single-source, R7 window
+  bound) are explicit good-passes/bad-fails assertions over injected temp dirs.
+  See `tests/telemetry.rs`.

@@ -1,0 +1,3 @@
+# A minimal config: one key set, every other §10 value falls back to its frozen
+# default (known-good G2 fixture).
+maxResults = 3

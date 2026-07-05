@@ -1,2 +1,5 @@
 # Serena code-intelligence workspace (onboarding output, memories, cache) — local tooling state
 .serena/
+
+# Rust build output
+/target

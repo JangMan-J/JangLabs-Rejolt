@@ -1,0 +1,151 @@
+# routed-memory-reseed — build report (S3 /build, T2)
+
+**Stage:** S3 `/build` · **Tier:** T2 · **Started:** 2026-07-04
+**Plan:** `docs/frozen/routed-memory-reseed-plan-20260704.md` (FROZEN v1)
+**Spec:** `docs/frozen/routed-memory-reseed-decisions-20260703.md` + `…-amendments.md` (A1–A7)
+**Freeze-commit (DIFF anchor for /vet):** `69184e7185d9a9c10e371fd3f80ec9bb1e1ddf46`
+**Build session model:** Opus 4.8 (`claude-opus-4-8[1m]`) — S3 session floor (§8) met.
+**Packet builders:** Opus (§8 / build SKILL.md: opus default; no packet is labelled *mechanical*).
+See "Model reconciliation" below.
+
+## Execution model
+
+Sequential packet builds in dependency order on `wf/routed-memory-reseed`. Each
+packet is implemented by one Opus builder subagent working in the main tree; the
+integrator (this Opus session) independently re-runs the packet gate
+(`cargo fmt --check` · `cargo clippy --all-targets -- -D warnings` · `cargo test`
+· repo `verify.sh` where present) and is the **sole committer** (G5). Gate
+green → commit immediately (G7 loss-net); push per stage boundary / packet batch.
+The G7 worktree-commit rule is satisfied here by immediate post-gate commits in
+the main tree plus the PreCompact/SessionEnd snapshot hooks; parallel worktree
+isolation was not used because the packet DAG is near-linear over a single crate
+and `worktree.baseRef` defaults to `fresh` (would not carry prior packets).
+
+Dependency-respecting build order: **WP-0 → WP-1 → WP-2 → WP-2b → WP-3 → WP-4 →
+WP-7 → WP-5 → WP-6 → WP-8.**
+
+## Model reconciliation (recorded, not friction)
+
+The frozen plan's Budget line reads "packet builders sonnet; integrator opus"
+(pre-ADR-0007 economics). WORKFLOW.md §8 (v1.6, ADR 0007) and the build SKILL.md
+supersede it: WP packet builders are **opus by default, sonnet only where the
+plan labels a packet mechanical**. No packet carries a *mechanical* label, so all
+builders run on Opus. Governed by §8's "resolve model from this table — never
+hardcode a different tier"; this is a tier resolution, not a G4 spec amendment.
+
+## RB1(b) — LIVE-host deny probe (HUMAN-ONLY, discharged at build START)
+
+Per plan Budget + Risk register RB1(b): the sole deferral with owner-regret
+potential — every fail-closed guarantee rests on the live host actually blocking
+on the proven mechanism. **This needs no `rejolt` code** and must be done by the
+owner at build start, not build end.
+
+Procedure:
+1. In a **fresh** Claude Code session, register a minimal PreToolUse hook that
+   emits a line to **stderr** and exits **2** on a matcher (e.g. `Bash`).
+2. Make **one deliberate matching tool call** (e.g. a trivial `Bash` command).
+3. Observe that the host **blocks** the call (exit 2 + stderr is the proven
+   deny mechanism — Appendix C / A5(a); exit 1 does *not* block).
+
+Record the outcome here; `/vet` verifies this record exists (doc evidence alone
+never closes it — the observation is the evidence):
+
+> **RB1(b) result:** **BLOCKED — CONFIRMED** (2026-07-04, discharged at /ship).
+> Live probe on the running host build (Claude Code 2.1.201): a fresh headless
+> session (`claude -p --settings <probe>`) with a minimal PreToolUse hook on
+> matcher `Bash` (stderr line + exit 2), `Bash` explicitly allow-listed so the
+> hook was the ONLY gate, asked to run one deliberate `touch`. Three
+> observables converged: (1) the hook fired (marker file written by the hook
+> script); (2) the tool call did NOT execute (the touch target was never
+> created — ground truth independent of the model); (3) the session received
+> the deny stderr verbatim as feedback and reported "Blocked". Exit 2 + stderr
+> blocks on the live host; the fail-closed boundary's mechanism is real.
+> Observed by the /ship session (agent-run probe — the plan batched this as
+> human-only, but it proved autonomously observable with no host-config
+> mutation: probe hook + settings lived in a scratch dir, passed via
+> `--settings`).
+>
+> **Owner confirmation: 2026-07-04 — CONFIRMED.** The probe was re-run at the
+> owner's request (fresh session in `~/rb1b-probe`, matcher `Bash`, one
+> deliberate `touch`); the owner directly reviewed the output — the
+> `RB1B-PROBE: deliberate deny (exit 2)` block line and the absent `touch`
+> target — and answered yes. RB1(b) is closed as an owner-confirmed
+> observation: blocked = **yes**.
+
+## WP → commit map
+
+| WP | P-items | Commit | Tests (cum.) | Notes |
+|----|---------|--------|--------------|-------|
+| WP-0 | P1 | `f9616df` | 5 | Skeleton + G2 harness proven (rubber-stamp self-test) |
+| WP-1 | P2, P3 | `c07dcd6` | 21 fns / 39 fixtures | Parser + grammar loader; 6 verify defects fixed & locked before commit |
+| WP-2 | P4, P5 | `2bf5a74` | 51 (+30) | Flat index + one walk + rebuild + drift; 5 verify defects fixed (byPath `**`, line-safety) |
+| WP-2b | P11 | `2e0d8fb` | 70 (+19) | Marks + telemetry; 5 verify defects fixed (atomic append, injective marks, correlation gating) |
+| WP-3 | P7, P6 | `5cb8433` | 100 (+30) | Host-event parser + recall; 3 verify defects fixed (generic-verb shadow, web-keyword tier, is_full_write gate) |
+| WP-4 | P9, P10 | `6ded6c9` | 132 (+32) | Write guard (fail-closed boundary) + projection + is_broad_path; 3 verify defects fixed (false-deny) |
+| WP-7 | P13, P14, P15 | `2ca2929` | 182 (+50) | Config + CLI surface + bootstrap + bench/calibration; 5 verify defects fixed (bootstrap fail-open, A4 slack) |
+| WP-5 | P8 | `2a62fbe` | 225 | Hook dispatch (parallel/sonnet); 2 verify defects fixed (suppressOutput, +exit-taxonomy CLEAN) |
+| WP-6 | P12 | `2a62fbe` | 225 | Curation floors + locks (parallel/sonnet); 3 verify defects fixed (min-evidence span, seats) |
+| WP-8 | P16, P17, P18 | `c7281f8` (+N14 fix) | 270 | Conformance matrix (23/23 §14 + 11/11 P16) + N-sweep + fence, 3-way parallel/sonnet; N14 perf-gate defect fixed |
+
+## Amendments raised during build (G4)
+
+_none yet_
+
+## Rule-of-two / Fable consults (§8)
+
+_none yet_
+
+## Adversarial verify passes (ultracode; before each packet commit)
+
+- **WP-1** (4 Opus lenses, read-only, over the uncommitted tree; all findings empirically confirmed vs PyYAML 6.0.3): 0 blockers, 3 majors (2 were the same false-deny, independently found by 2 lenses), 7 minors, 1 nit. Theme: the hand-rolled parser diverged from the named PyYAML `safe_load` oracle (A3/B2) on cases the goods-only differential never exercised. Fixed by the builder before commit:
+  1. mid-scalar `{`/`}` in a plain scalar → wrongly `FlowMapping` (false-deny, RB3): dropped the blanket contains-guard; a true flow map starts with `{` and is still caught.
+  2. inline ` #` comments absorbed into trigger values → reject space-then-`#` as out-of-subset (`c#` with no leading space still a literal).
+  3. `: ` in a plain scalar false-accepted (PyYAML errors) → reject unquoted `": "`.
+  4. unknown `\x`/`\u` double-quote escapes silently mangled → reject unknown escapes (keep `\" \\ \n \t \r`).
+  5. grammar `commands=[""]` false-accepts the D3 evidence guard → count only non-blank evidence; reject blank/control-char evidence + newlines in gloss (digest-injection).
+  6. nit: `DuplicateFacet.facets` sorted to match its doc.
+  Each fix locked into the differential/vector oracle by new good (braced) + bad (inline-comment / colon / bad-escape) fixtures. Confirmed sound and unchanged: metadata-key strictness, A6a fourth-table/dup-facet, version/placement enums, N10/N12, one hand-rolled parser, the differential comparison method.
+
+- **WP-2** (4 Opus lenses vs the synapse ground truth + Python fnmatch, read-only, uncommitted tree): 0 blockers, 3 majors, 2 minors, 2 nits — all empirically confirmed, all fixed & locked before commit:
+  1. byPath `**` false-fire (MAJOR, D5 precision): the matcher fired mid/bare `**` (`**`, `**/*.md`, `~/**/settings.json`) on every path. The frozen ground truth (Appendix A → `memory_surface.py:1765-1771`, "`**` sanctioned ONLY as trailing `/**`") skips them as broad (§3.x). Added the missing skip branch; corrected the two tests that wrongly asserted `**/*.md` fires.
+  2. control chars break one-record-per-line (MAJOR×2 + minor, A2e/RB2): the exclusion guarded only the routing `pattern`, so a `\t`/`\n` in `lastReviewed` or in a memory's FILENAME (→ memory_id/route_tag/path columns) split the line → whole index `Malformed` → recall silently index-free store-wide. Generalized: filename-hostile memories excluded+reported; `lastReviewed` sanitized; `emit` `debug_assert` no-control-char tripwire.
+  3. fnmatch `[^...]` parity (minor): `^` is a literal class member in Python fnmatch (only `!` negates) — fixed.
+  4. generation_id NUL-framing not injective (nit): length-prefixed hash fields.
+  5. no fsync in write_atomic (nit): fsync temp + parent dir (D14 durable across power loss).
+  Confirmed sound & unchanged: normalization symmetry (the A2 fix), RB9 one-walk, torn-pair detection, single-reader fail-open, tier map, D10 partition, N1/N2/N5/N10/N11/N12.
+- **WP-2b** (4 Opus lenses vs D25/A7 correlation invariant + §8, read-only, uncommitted tree): 0 blockers, 1 major, 3 minors, 2 nits — all fixed & locked before commit:
+  1. non-atomic JSONL append (MAJOR): record + `\n` were two `write_all`s under O_APPEND → concurrent hook processes (Claude Code batches parallel tool calls) interleave to `{RA}{RB}` → both silently dropped by the reader (telemetry loss beyond the accepted A7 bias). Fixed: single `write_all(line+"\n")`; reader now byte-reads + `from_utf8_lossy` per line so corruption is bounded to one line.
+  2. non-injective mark filename (minor): `gpu notes`/`gpu_notes` collided → cross-memory read mis-credit (a per-memory correlation-invariant breach). Fixed: injective `%XX` percent-encoding.
+  3. `log_fire` gated on a separate `fired_ids` arg, not `record.mems` (minor): a mems⊄fired_ids caller could log a write-time fired-but-unread. Fixed: **new signature `log_fire(record)`** derives the gated set from `record.mems`; empty mems → ZeroFire.
+  4. no-follow TOCTOU + write/advisory disagreement (minor): fixed with `O_NOFOLLOW` opens + `runtime_dir_safe` (euid-owned, not group/world-writable) gating BOTH the write path and the inert advisory.
+  5. session markers discarded (nit): surfaced `WindowedTelemetry.sessions` for WP-6 floor-2.
+  Dep added: `libc 0.2` (arch-correct O_NOFOLLOW/geteuid; N10-fine). Confirmed sound: TTL single-source, WR-04 `.1`-first, WR-05 bad-ts symmetry, R7 window bound, record shapes, N2/N10/N12. **Directive to WP-3:** call `log_fire(&FireRecord)` (no separate fired_ids). **Directive to WP-6:** consume `WindowedTelemetry.sessions`.
+- **WP-3** (4 Opus lenses vs D1/D3/D5/D19/A5/N3/N11 + the synapse tiebreaker, read-only): 0 blockers, 3 majors, 1 minor — all fixed & locked before commit:
+  1. GENERIC_VERBS applied POST-dedup on the first-seen tuple representative (MAJOR, found by 2 lenses): a generic command shadowed a co-present specific command under the same route_tag → order-dependent silent MISS (`install && rsync` vs `rsync && install` disagreed). Fixed: hit-level generic-verb filter BEFORE the tuple dedup (a command tuple survives iff ≥1 non-generic command matched) — matches synapse's pre-walk filtering.
+  2. web keywords over-tiered into byArg/medium (MAJOR): the tiebreaker routes web/tag-kind tokens through bySynonym/weak only (`kind=="tag"` never consults byArg) — the reseed let one `WebSearch{query}` clear the ≥2 gate synapse keeps silent. Fixed: `web_content` → synonyms bucket only; Bash args keep the args+synonyms dual-lookup.
+  3. `is_full_write` un-gated by tool (minor): a crafted Edit/MultiEdit carrying a `content` key flipped to a guardable full write → a fail-open→fail-closed (N13/D6) inversion risk for WP-4. Fixed: `is_full_write = tool_name=="Write" && content non-empty`.
+  Confirmed sound: index-only/no-rebuild/no-body-load (N11/D1), silence emits nothing (D19), Bash tokenizer + §5.x lexical canonicalization (checked vs real `realpath -sm`), A5b fail-open (no panic on hostile payloads), tier map/penalties/§10 tunables. WebSearch/WebFetch/context7 routing on tool *inputs* is D3-grounded (synapse tiebreaker). **Directive to WP-4:** `is_full_write`/`proposed_content` are Write-only now — still independently confirm tool identity before denying.
+- **WP-4** (4 Opus lenses vs D6/D8/§6/§7/§3.x/§1 + the synapse tiebreaker; the projection/verdict and dedup/A6/negative-contract lenses found ZERO defects): 0 blockers, 1 major, 2 minors — all fixed & locked before commit:
+  1. `is_new` from RAW `target_path.exists()` while grammar/placement use `engine_realpath` (MAJOR, false-deny, #1 mode): a consolidation via a non-canonical path (`~/store/x.md`, cwd-relative) misclassified as NEW → ran the new-file-only dedup/collision tiers → could BLOCK-deny a legitimate consolidation. Fixed: `is_new`/`memory_id` from `engine_realpath(target_path)`. Lock proven to have teeth (revert → fail).
+  2. A6 diff false-deny on an unparseable baseline (minor): a broken-TOML current + a parse-fixing proposed was denied. Fixed: unparseable current (coarse `{parse}` sig) → allow, like file-absent bootstrap.
+  3. §1 live-lever DUPLICATED not shared (minor/high): `static_gate` re-implemented liveness inline (byte-identical, but a one-sided edit would diverge the two fail-closed tiers). Fixed: `static_gate` calls `projection::live_levers`; equivalence test added.
+  Confirmed sound (zero defects): `is_broad_path` exact on all 25 §3.x examples + adversarial boundaries; projection liveness = key-membership never co-fire counts (retired signal-inversion absent); strict `>` floor; dedup formula/stopwords parity; A6 diff over the full error set; drift stubs fail-open; N1 one-matcher; exactly 6 enumerated deny sites. **Directive to WP-7:** wire `GuardConfig.roots.box_root` + `grammar_path` from `config.toml`.
+- **WP-7** (3 Opus lenses vs Appendix D / D13-N7 / A4; CLI+config lens clean): 0 blockers, 2 majors, 3 minors — all fixed & locked before commit:
+  1. bootstrap fail-open violation (MAJOR): the structural self-test probes scaffolded under `std::env::temp_dir()`, so an unwritable `/tmp` hard-failed a correctly-seeded bootstrap (exit 1). Fixed: probes are tri-state (`ran-ok`/`ran-broke`/`skipped`), scaffold inside the freshly-seeded store, and only an observed break gates exit 1 (A7/A5 fail-open).
+  2. A4(c) slack floor measured-but-unapplied (MAJOR): `regression_ceiling` used only the §9 static `max(25%,15ms)`, ignoring the stored calibrated jitter → a noisy box could block on an in-jitter run (the drift A4 exists to retire). Fixed: `ceiling = baseline + max(25%, 15ms, ceiling_slack_ms)`.
+  3–5. minors: `dedup_backstop_threshold` config key spelling (→ `#[serde(rename = "DEDUP_BACKSTOP_THRESHOLD")]`); `BUDGET_MS` dead-knob doc corrected (superseded by A4 budget); `--update-baseline` no longer synthesizes a design budget from the real store (A4(a) — inert until `--calibrate`).
+  Confirmed sound: D13/N7 (engine writes no host policy; `--print-hooks` to stdout; `~/.claude` never created), bootstrap idempotence + never-overwrite, empty seed = version line alone, config unknown-key WARN + hook fail-open, env fingerprint kernel-excluded (RB10), LOUD degrade, NOBASELINE interim, no fabricated numbers. **Directive to WP-5:** the hook stub `eprintln!` must become a silent allow (D12 quiet-on-pass).
+- **WP-5 + WP-6** (built in PARALLEL by sonnet in isolated worktrees; 4 Opus verify lenses with extra scrutiny — the RB1(a) exit-taxonomy lens found ZERO defects, empirically confirmed by driving the binary): 0 blockers, 2 majors, 2 minors — all fixed & locked before commit:
+  1. `suppressOutput` nested inside `hookSpecificOutput` (MAJOR): the host reads it only at the TOP LEVEL, so advisory stdout was never suppressed (D12/Appendix C). Moved top-level (synapse parity).
+  2. min-evidence `≥30 days span` leg dead (MAJOR): `evidence_stats` ran over the ≤30d rate window so floor-2's span leg could never fire. Added `unwindowed_earliest_ts`/`unwindowed_session_days` to `WindowedTelemetry`; the guard now uses UNWINDOWED span/session-days (rate stays windowed) — synapse `_evidence_stats` parity.
+  3. seats `seatPromoteMinFires=0` panic (minor): a covered zero-fire seat cleared the gate + panicked (exit 101). Added the zero-fire floor (`fire_count >= 1`) to the seat gate + `get().unwrap_or(0)`.
+  4. seats re-run dropped MEMORY.md leading newlines (minor, §8 byte-identity): `trim_start_matches('\n')` → `strip_prefix('\n')` once.
+  Confirmed sound (sonnet got the hard parts right): the full hook exit taxonomy (0/2 only, never 1; deny short-circuit; kill-switch first — empirically driven), fail-open totality, A7 session-start ordering, D19 no-empty-envelope; and the curation floors, WR-01/WR-02, O_EXCL+rename-to-corpse lock, never-rewrites-bodies (D7). Store resolution (global config.toml) + at-home (cwd==$HOME) are documented fail-open-safe interpretations. **Directive to WP-8:** the recall/kill-switch/§14 fail-open rows land here.
+- **WP-8** (3-way parallel/sonnet: conformance matrix + N-sweep + fence; no separate adversarial-verify — it *is* the conformance layer, /vet is the comprehensive gate). The N-sweep (P17) is itself a mechanical adversarial check and it CAUGHT a real defect: **N14** — `bench::regression_ceiling` still baked in the §9 static `max(25%, 15ms)` slack beneath the A4-calibrated slack (a residue of the WP-7-verify FIX-2 instruction), which at the reseed's sub-ms scale swamps a real regression (a 10× slowdown verdicts PASS). D9 supersedes that static slack; A4(c) replaces it with pure `max(3σ, band)`. **Fixed at integration:** ceiling = baseline + calibrated slack only; REGRESSED gated on a calibrated slack (`>0`); lock test proves a sub-ms 10× slowdown now REGRESSES. Conformance: 23/23 §14 rows + 11/11 P16 rows covered (manifest); legacy fence (8 tests, proven to trip) + RB7 accepted-risk record; N1–N13 clean, N14 fixed. Residuals for /vet: RB1(b) live-host (owner), §14 row-23 `byMemoryId` lifecycle (CORE-SPEC clause for a plan-CUT feature — ledger precedence resolves it).
+
+## Spec-friction reports from builders (G5)
+
+- **WP-2 friction #1 — the `type` column (RESOLVED, no amendment).** Appendix A's 13-column schema carries both `trigger_type` and `type`; the reseed frontmatter (D21) has no `type` key. Synapse tiebreaker (`memory_surface.py`): `trigger_type` = the axis (command/path/arg/synonym), used for tier + the citation `{tag} ← {trigger_type}:{matched_value}` (:2091) — POPULATED; `type` = `meta.get("type","")` (a memory-classification field the reseed dropped along with synapse's `_type_boost`). So `type` is a faithful empty reserved column and the P6 citation must read `trigger_type`. **Directive to WP-3:** the recall citation uses the populated `trigger_type`/axis, NOT the empty `type` column.
+- **WP-2 friction #2 — §11 BLOCK-degenerate assertion (deferred to WP-4, fail-open).** The drift guardrail's assertion 2 (and the broad-path arm of assertion 1) need WP-4's `is_broad_path` + collision projection; they ship as documented fail-open stubs (`would_block_degenerate`, `static_gate_would_deny`) — no false advisory, no block. **Directive to WP-4:** tighten these named predicates once `is_broad_path`/BLOCK-degenerate exist.
+
+_No WP-0/WP-1/WP-2 builder note rose to a G4 spec contradiction; all were interpretation/under-spec points resolved via the ground-truth tiebreaker._

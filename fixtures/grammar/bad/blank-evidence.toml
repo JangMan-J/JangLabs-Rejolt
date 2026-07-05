@@ -1,0 +1,6 @@
+grammar-version = 1
+
+[domain.blank]
+gloss = "has a blank evidence entry"
+placement = "either"
+commands = [""]

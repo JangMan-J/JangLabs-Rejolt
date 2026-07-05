@@ -1,5 +1,21 @@
 # Synapse Memory — Runtime-Agnostic Core Spec
 
+> **SUPERSEDED where the frozen pair speaks — see
+> [`docs/frozen/routed-memory-reseed-decisions-20260703.md`](./docs/frozen/routed-memory-reseed-decisions-20260703.md)
+> + [`docs/frozen/routed-memory-reseed-amendments.md`](./docs/frozen/routed-memory-reseed-amendments.md)**
+> (2026-07-04, /ship compaction, discharges R4). The pair is the authoritative
+> spec; it WINS over this document on every conflict — including (non-exhaustive)
+> substrate (Rust binary, D16), grammar format (`grammar.toml`, D23), legacy
+> import (none, D17), fallback derivation (removed, D18), CLI (`rejolt`,
+> D20/A5), hook semantics (A5), the closed write-capable tool set (A5(c)),
+> perf magnitudes (D26/A4 — §9's numbers here are void), the flat-index schema
+> (plan Appendix A — no `byMemoryId`; §14 row 23's lifecycle clause names a cut
+> feature), and the write-guard boundary enumeration (A6, and the watched-
+> location scope per the walk-back report F2/F24). Where the pair is SILENT,
+> this document still stands as the detailed behavioral contract (the pair's
+> own precedence line). Shipped state: see
+> `docs/reports/routed-memory-reseed-walkback-20260704.md`.
+
 > **Status:** reseed draft.
 > **Scope:** the tag-routed memory subsystem: recall, write-guard, self-curation, catalog, and
 > collision projection. Host-runtime base harnesses and corpusforge are out of scope (§12).

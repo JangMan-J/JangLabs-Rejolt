@@ -1,0 +1,2 @@
+{"ts":"not-a-number","qid":"q-bad-1","mems":[{"id":"gpu","tag":"gpu-tools","type":"command","val":"nvidia-smi"}],"conf":"high"}
+{"ts":"nope","id":"gpu","signal":"read"}

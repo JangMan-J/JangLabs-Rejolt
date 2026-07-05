@@ -1,0 +1,9 @@
+# F16 known-bad: a facet tag NAME that is not TAG_RE-shaped (kebab-case).
+# Memory tags are kebab-enforced, so `GPU_Tools` can never have a member —
+# dead vocabulary; validate must reject it (Appendix A: TAG_RE at validate).
+grammar-version = 1
+
+[tool.GPU_Tools]
+gloss = "GPU diagnostics"
+placement = "either"
+commands = ["nvidia-smi"]

@@ -1,0 +1,6 @@
+grammar-version = 2
+
+[domain.a]
+gloss = "a"
+placement = "box"
+commands = ["x"]
