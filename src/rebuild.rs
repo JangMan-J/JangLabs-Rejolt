@@ -595,7 +595,7 @@ pub fn drift_guardrail(memories: &[MemoryFacts], index: &Index) -> DriftReport {
         }
     }
 
-    // Assertion 2 (WP-4 classifier stub; fails open).
+    // Assertion 2 (the real WP-4 predicate — projection-backed; fails open).
     for m in memories {
         if would_block_degenerate(m, index) {
             advisories.push(format!(

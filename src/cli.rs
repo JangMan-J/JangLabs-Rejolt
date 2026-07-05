@@ -14,14 +14,12 @@
 //! human-facing report goes to stderr (or stdout for the plain report), and
 //! machine output (`--json`, `--print-hooks`, the projection) goes to stdout.
 //!
-//! ## Wired vs not-yet-wired
+//! ## Wiring
 //!
-//! `bootstrap` (P14), `rebuild` (WP-2), `validate` (WP-1/WP-2), `check-write`
-//! (WP-4), `project` (WP-4), `search` (WP-3), `bench` (P13), and `maintain` /
-//! `seats` (WP-6) are WIRED to their engines. The `hook` dispatch (WP-5) is
-//! still a clearly-marked NOT-YET-WIRED stub — its Appendix D flag/exit SURFACE
-//! is defined here (so WP-8 consumes it verbatim), but the engine body lands in
-//! WP-5.
+//! Every subcommand is WIRED to its engine: `bootstrap` (P14), `rebuild`
+//! (WP-2), `validate` (WP-1/WP-2), `check-write` (WP-4), `project` (WP-4),
+//! `search` (WP-3), `bench` (P13), `maintain` / `seats` (WP-6), and the `hook`
+//! dispatch (WP-5, [`crate::hook::dispatch`]).
 
 use std::path::{Path, PathBuf};
 

@@ -479,9 +479,9 @@ struct MaintenanceState {
 /// hook's handling. Read-only and fail-open: an absent/malformed state file
 /// reads as `lastPassLine: 0`; an unreadable telemetry file reads as 0 lines.
 ///
-/// This packet computes and exposes the signal; it does NOT call the pass
-/// (`curation::maintain`, WP-6, is not wired in this worktree — see the
-/// `// INTEGRATOR:` marker in [`dispatch_session_start`]).
+/// This computes the "is it worth checking" signal; [`dispatch_session_start`]
+/// consumes it and calls the pass (`curation::maintain`, wired at the WP-5+WP-6
+/// integration), which re-verifies the trigger UNDER THE LOCK (WR-02).
 pub fn maintenance_due(store: &Path, telemetry: &Telemetry) -> bool {
     let current = telemetry_line_count(telemetry.telemetry_file());
     let last_pass_line = read_maintenance_state(store).last_pass_line;
