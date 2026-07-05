@@ -38,6 +38,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use crate::path_class::is_broad_path;
 use crate::tag::is_tag;
 use crate::tier::{Axis, COLUMN_COUNT, Source, Tier};
 
@@ -399,8 +400,8 @@ fn exact_hits<'a>(
 
 /// Match a raw byPath glob against the query paths, returning the first query
 /// path that matches. Mirrors Appendix A / the frozen ground-truth matcher
-/// (synapse `memory_surface.py:1765-1771`, `project_triggers` pitfall 5): expand
-/// a leading `~`, then
+/// (synapse `memory_surface.py:1765-1771`, `project_triggers` pitfall 5): a
+/// §3.x-BROAD glob never routes at all, then expand a leading `~`, then
 ///
 /// 1. a **trailing** `/**` is literal-prefix containment
 ///    (`ap == prefix || ap.startswith(prefix + "/")`);
@@ -408,9 +409,21 @@ fn exact_hits<'a>(
 ///    classes `**`, `**/*.md`, `~/**/settings.json` as broad); return `None`;
 /// 3. otherwise an fnmatch scan.
 ///
-/// `**` is thus sanctioned ONLY as a trailing `/**`; that is what keeps a broad
-/// glob from firing on every path (D5 precision).
+/// `**` is thus sanctioned ONLY as a trailing `/**` behind a CONCRETE prefix.
+/// The up-front [`is_broad_path`] gate closes the anchor-only class the two
+/// branches below miss on their own: `/**` and `~/**` are trailing-`/**` forms
+/// whose prefix is an anchor (empty / `$HOME`), so branch 1 alone would contain
+/// EVERY path under them; `/*` / `~/*` reach fnmatch where `*` crosses `/`
+/// (Python-fnmatch parity) and likewise match everything. §3.x classifies all
+/// of these broad, and this gate is the SAME classifier liveness reads
+/// (`projection::live_levers`) — match-time sanctioning and the live-lever
+/// definition can never disagree on what a broad path is (D5 precision;
+/// deviates from the synapse matcher, which shares the anchor-only hole —
+/// D15: synapse is reference, not constraint; walk-back fix F3, 2026-07-04).
 fn path_scan_match(glob: &str, paths: &[String]) -> Option<String> {
+    if is_broad_path(glob) {
+        return None; // §3.x broad → non-routing, regardless of glob shape
+    }
     let expanded = expand_tilde(glob);
     if let Some(prefix) = expanded.strip_suffix("/**") {
         // Literal prefix containment: `== prefix` OR under `prefix + "/"` — never
@@ -685,6 +698,47 @@ mod tests {
             ..Default::default()
         };
         assert!(idx.walk(&q2).iter().all(|h| h.record.memory_id != "prefix"));
+    }
+
+    #[test]
+    fn walk_bypath_anchor_only_globs_never_fire() {
+        // Walk-back fix F3 (2026-07-04): the anchor-only broad class — `/**` and
+        // `~/**` are trailing-`/**` forms whose PREFIX is an anchor, so the
+        // containment branch alone would match every path; `/*` and `~/*` reach
+        // fnmatch where `*` crosses `/`. §3.x classifies all four broad; the
+        // walk must agree with the liveness classifier and never route them.
+        let idx = Index::from_records(vec![
+            rec(Axis::Path, "/**", Source::Tag, "root-recursive"),
+            rec(Axis::Path, "~/**", Source::Tag, "home-recursive"),
+            rec(Axis::Path, "/*", Source::Memory, "root-star"),
+            rec(Axis::Path, "~/*", Source::Memory, "home-star"),
+            // GOOD contrast: a concrete prefix behind the trailing /** still fires.
+            rec(Axis::Path, "~/.config/gpu/**", Source::Tag, "concrete"),
+        ]);
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/u".into());
+        let q = WalkQuery {
+            paths: vec![
+                "/etc/anything".into(),
+                format!("{home}/some/file.txt"),
+                format!("{home}/.config/gpu/nv.conf"),
+            ],
+            ..Default::default()
+        };
+        let fired: Vec<&str> = idx
+            .walk(&q)
+            .iter()
+            .map(|h| h.record.memory_id.as_str())
+            .collect();
+        for broad in ["root-recursive", "home-recursive", "root-star", "home-star"] {
+            assert!(
+                !fired.contains(&broad),
+                "{broad} is an anchor-only broad glob — must NOT fire"
+            );
+        }
+        assert!(
+            fired.contains(&"concrete"),
+            "a concrete-prefix trailing /** must still fire"
+        );
     }
 
     #[test]
