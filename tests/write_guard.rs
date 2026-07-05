@@ -235,6 +235,57 @@ fn collision_block_degenerate_denies_guide_broad_allows() {
 const PLACEMENT_GRAMMAR: &str = "grammar-version = 1\n\n[domain.boxonly]\ngloss = \"box general fact\"\nplacement = \"box\"\ncommands = [\"boxcmd\"]\n\n[tool.ripgrep]\ngloss = \"ripgrep\"\nplacement = \"either\"\ncommands = [\"rg\"]\n";
 
 #[test]
+fn foreign_store_writes_get_placement_gate_only_cr01() {
+    // Deployment fix F25 (ground-truth CR-01, memory_surface.py:1634-1662):
+    // the full tier ladder has authority only over BOX-store writes; foreign
+    // stores (Claude project stores, repo memory/ dirs) get ONLY the
+    // placement gate — "no grammar authority over foreign stores".
+    let store = setup("cr01", PLACEMENT_GRAMMAR, &[]);
+    let box_root = fs::canonicalize(&store).unwrap();
+    let c = cfg(&store, Some(box_root));
+    let project_store = unique_dir("cr01-proj")
+        .join(".claude")
+        .join("projects")
+        .join("-home-u-someproj")
+        .join("memory");
+    fs::create_dir_all(&project_store).unwrap();
+
+    // The live harness auto-memory format: metadata.type, NO tags — does not
+    // parse as the rejolt dialect.
+    let harness_mem = "---\nname: some-note\ndescription: a harness auto-memory\nmetadata:\n  type: project\n---\nThe fact body.\n";
+
+    // ALLOW: a harness-format memory saved into a PROJECT store — not ours to
+    // shape (pre-fix this was a tier-1 shape deny: the #1-rule false-deny on
+    // every ordinary auto-memory save).
+    assert!(
+        full_write(&store, &project_store.join("some-note.md"), harness_mem, &c).is_allow(),
+        "a foreign-store harness-format memory must fail open (CR-01)"
+    );
+
+    // DENY contrast: the SAME content written into the BOX store gets the full
+    // ladder — shape/evidence denies (tag-less, unknown metadata key).
+    assert_deny(
+        &full_write(&store, &store.join("some-note.md"), harness_mem, &c),
+        "shape-evidence",
+    );
+
+    // A rejolt-dialect memory in a foreign store still gets the placement
+    // gate: box-only tags misplace (deny), either-placement passes — and the
+    // box-corpus tiers (dedup/static/collision) never run there.
+    let boxmem = "---\ndescription: a box general fact\nmetadata:\n  tags: [boxonly]\n---\nbody\n";
+    assert_deny(
+        &full_write(&store, &project_store.join("misplaced.md"), boxmem, &c),
+        "misplacement",
+    );
+    let eithermem =
+        "---\ndescription: project-local note\nmetadata:\n  tags: [ripgrep]\n---\nbody\n";
+    assert!(
+        full_write(&store, &project_store.join("ok.md"), eithermem, &c).is_allow(),
+        "either-placement in a foreign store passes the placement gate"
+    );
+}
+
+#[test]
 fn misplacement_denies_all_box_to_non_box_allows_mixed_and_box_target() {
     let store = setup("misplace", PLACEMENT_GRAMMAR, &[]);
     let box_root = fs::canonicalize(&store).unwrap();

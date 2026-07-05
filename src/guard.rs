@@ -315,17 +315,53 @@ pub fn is_candidate_memory_write(
     if is_infra_basename(target_path) {
         return false;
     }
+    // F25 (CR-01 parity): write-context is a BOX-store surface only — its
+    // payload is the box vocab digest + box-corpus dedup candidates, which are
+    // meaningless for a foreign store, and injecting the schema on every
+    // harness auto-memory save in project stores would be pure noise.
+    if !cfg
+        .roots
+        .box_root
+        .as_ref()
+        .is_some_and(|r| target_under(target_path, r))
+    {
+        return false;
+    }
     frontmatter::frontmatter_block(proposed_content).is_ok()
 }
 
 /// The memory-write tiers (§6, in order). The caller has confirmed a full-file write
 /// of a frontmatter-bearing, non-grammar, non-infra target.
+///
+/// **Store-class split (deployment fix F25, 2026-07-04 — CR-01 parity):** the
+/// full tier ladder has authority ONLY over writes INTO `store` (the box store
+/// on the hook path; the `--store` dir for the CLI probe). A target OUTSIDE it
+/// — a foreign store in the watched set (Claude project store, repo `memory/`
+/// dir) — gets ONLY the placement gate, per the ground-truth engine
+/// (`_classify_target` + the non-box branch, `memory_surface.py:1634-1662`:
+/// "no grammar authority over foreign stores", CR-01). Their memory format is
+/// not ours to shape — the live harness auto-memory format is tag-less, and
+/// box-grade shape validation there would deny every ordinary auto-memory save
+/// (the #1-rule false-deny). A foreign-store memory that does not parse as the
+/// rejolt dialect fails OPEN (nothing to read placement from); one that parses
+/// runs the misplacement tier only.
 fn memory_write_guard(
     store: &Path,
     target_path: &Path,
     content: &str,
     cfg: &GuardConfig,
 ) -> GuardVerdict {
+    if !target_under(target_path, store) {
+        // Foreign store (CR-01): placement gate only, fail open otherwise.
+        let Ok(fm) = frontmatter::parse(content) else {
+            return GuardVerdict::Allow; // no shape authority over foreign stores
+        };
+        if let Some(correct_box_path) = misplacement_box_path(&fm, target_path, cfg) {
+            return GuardVerdict::Deny(DenyReason::Misplacement { correct_box_path });
+        }
+        return GuardVerdict::Allow;
+    }
+
     // Tier 1: shape / evidence (RB3). Reuse the WP-1 parser; do not re-implement.
     let fm = match frontmatter::parse(content) {
         Ok(fm) => fm,
@@ -1058,14 +1094,37 @@ mod tests {
     fn candidate_memory_write_matrix() {
         let cfg = GuardConfig {
             grammar_path: PathBuf::from("/s/_grammar.toml"),
-            roots: StoreRoots::default(),
+            roots: StoreRoots {
+                box_root: Some(PathBuf::from("/s")),
+            },
         };
-        // GOOD: a full, frontmatter-fenced, non-infra, non-grammar write.
+        // GOOD: a full, frontmatter-fenced, non-infra, non-grammar write INTO
+        // the box store (F25: write-context is a box-store surface only).
         assert!(is_candidate_memory_write(
             Path::new("/s/gpu.md"),
             "---\nname: x\n---\nbody",
             true,
             &cfg,
+        ));
+        // BAD (F25): the same write into a FOREIGN store is not a candidate —
+        // the payload is box vocab + box dedup, meaningless there, and it
+        // would spam every harness auto-memory save.
+        assert!(!is_candidate_memory_write(
+            Path::new("/proj/.claude/projects/-p/memory/gpu.md"),
+            "---\nname: x\n---\nbody",
+            true,
+            &cfg,
+        ));
+        // BAD (F25): no box root configured → no candidate anywhere.
+        let no_root = GuardConfig {
+            grammar_path: PathBuf::from("/s/_grammar.toml"),
+            roots: StoreRoots::default(),
+        };
+        assert!(!is_candidate_memory_write(
+            Path::new("/s/gpu.md"),
+            "---\nname: x\n---\nbody",
+            true,
+            &no_root,
         ));
         // BAD: partial edit (not full) never counts, even with fenced content.
         assert!(!is_candidate_memory_write(
