@@ -38,9 +38,12 @@
 //!
 //! ## pre-op dispatch (order matters — the short-circuit)
 //!
-//! 1. **Write-guard branch** (Write/Edit/MultiEdit with a `target_path`):
+//! 1. **Write-guard branch** (Write/Edit/MultiEdit with a `target_path` inside
+//!    the watched guard scope — [`is_guard_scope`], F2: the grammar file + the
+//!    box store / project stores / repo `memory/` dirs, `.md` only):
 //!    [`crate::guard::check_write`]. `Deny` → the deny line to stderr, exit 2,
-//!    NOTHING else emitted. `Allow` (or not a guardable write) → continue.
+//!    NOTHING else emitted. `Allow` (or not a guardable write, or out of
+//!    scope — not ours to gate, CR-02) → continue.
 //! 2. **Recall** ([`crate::recall::recall`]): `Advisory` → its text joins the
 //!    `additionalContext`; `Silence` → nothing (D19).
 //! 3. **Write-context** ([`crate::guard::write_context`]), iff the op is a
@@ -205,11 +208,23 @@ fn dispatch_pre_op(op: &NormalizedOp, store: &Path, config: &Config) -> i32 {
     };
     let cfg = guard_config(store, config);
 
-    // 1. The write-guard branch (A5(c)'s closed write-capable tool set). A DENY
-    //    SHORT-CIRCUITS: stderr + exit 2, nothing else emitted.
-    if is_write_tool(&tool_op.tool_name)
-        && let Some(target) = &tool_op.target_path
-    {
+    // 1. The write-guard branch (A5(c)'s closed write-capable tool set), SCOPED
+    //    to the guard's watched locations (walk-back fix F2, 2026-07-04): the
+    //    grammar file plus memory-store `.md` targets. Without this scope, ANY
+    //    full write of `---`-fenced content anywhere on the host (a Jekyll page,
+    //    a K8s manifest, a Claude skill file) hit the shape tier and was DENIED
+    //    for out-of-dialect frontmatter — a mass false-deny of ordinary host
+    //    operations, the #1-rule violation. The proven ground truth
+    //    (`memory-write-guard.sh` D-14/CR-02) gates only watched locations:
+    //    "a file that merely SHARES one of these basenames anywhere else on
+    //    disk ... is not ours to gate". A DENY SHORT-CIRCUITS: stderr + exit 2,
+    //    nothing else emitted.
+    let in_guard_scope = is_write_tool(&tool_op.tool_name)
+        && tool_op
+            .target_path
+            .as_deref()
+            .is_some_and(|target| is_guard_scope(store, target, tool_op.cwd.as_deref(), &cfg));
+    if in_guard_scope && let Some(target) = &tool_op.target_path {
         let content = tool_op.proposed_content.as_deref().unwrap_or("");
         if let GuardVerdict::Deny(reason) =
             check_write(store, target, content, tool_op.is_full_write, &cfg)
@@ -230,10 +245,10 @@ fn dispatch_pre_op(op: &NormalizedOp, store: &Path, config: &Config) -> i32 {
     }
 
     // 3. Write-context, iff this is a candidate memory write (a full, fenced,
-    //    non-grammar, non-infra write — i.e. Write only, never Edit/MultiEdit).
-    if is_write_tool(&tool_op.tool_name)
-        && let Some(target) = &tool_op.target_path
-    {
+    //    non-grammar, non-infra write — i.e. Write only, never Edit/MultiEdit)
+    //    IN the guard's watched scope (F2: an out-of-store page write is not a
+    //    memory write — no write-context noise for it either).
+    if in_guard_scope && let Some(target) = &tool_op.target_path {
         let content = tool_op.proposed_content.as_deref().unwrap_or("");
         if is_candidate_memory_write(target, content, tool_op.is_full_write, &cfg) {
             let wc = write_context(store, target, content, &cfg);
@@ -245,6 +260,38 @@ fn dispatch_pre_op(op: &NormalizedOp, store: &Path, config: &Config) -> i32 {
         emit_additional_context("PreToolUse", &parts.join("\n\n"));
     }
     EXIT_OK
+}
+
+/// Whether `target` is inside the write-guard's watched scope (F2): the
+/// configured grammar file (A6 — engine-realpath identity, so a store-side
+/// symlink or a lab-addressed write of the same backing file still gates), or a
+/// memory-store `.md` target. The memory class mirrors the proven synapse
+/// detection set (`memory-write-guard.sh` D-14): the box store itself, any
+/// Claude project store (`…/.claude/projects/<key>/memory/…`), and repo
+/// `memory/` dirs (the dark-memory class) — matched adapter-lexically (§5.x),
+/// `.md` basenames only. Everything else is not ours to gate (CR-02): it fails
+/// open silently, whatever its frontmatter looks like.
+fn is_guard_scope(store: &Path, target: &Path, cwd: Option<&Path>, cfg: &GuardConfig) -> bool {
+    if crate::guard::is_grammar_target(target, &cfg.grammar_path) {
+        return true;
+    }
+    let canon = canonicalize_lexical(target, cwd);
+    let Some(name) = canon.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    if !name.ends_with(".md") {
+        return false;
+    }
+    let canon_store = canonicalize_lexical(store, None);
+    if canon.starts_with(&canon_store) {
+        return true; // the box store
+    }
+    // Any Claude project store or repo memory/ dir: a `memory` path component
+    // above the file (the shell-glob `*/memory/*.md` of the proven detector —
+    // `*/.claude/projects/*/memory/*.md` is a subset of this match).
+    canon
+        .parent()
+        .is_some_and(|dir| dir.components().any(|c| c.as_os_str() == "memory"))
 }
 
 // =============================================================================

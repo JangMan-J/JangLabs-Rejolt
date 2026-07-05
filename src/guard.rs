@@ -854,7 +854,7 @@ fn is_infra_basename(target: &Path) -> bool {
 /// Whether the write target IS the configured grammar file (A6). Compared via
 /// engine-realpath so a store-side symlink to the lab grammar resolves to the same
 /// file — and so a new (not-yet-existing) grammar path still matches on identity.
-fn is_grammar_target(target: &Path, grammar_path: &Path) -> bool {
+pub(crate) fn is_grammar_target(target: &Path, grammar_path: &Path) -> bool {
     engine_realpath(target) == engine_realpath(grammar_path)
 }
 

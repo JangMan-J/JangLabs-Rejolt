@@ -176,6 +176,54 @@ fn pre_op_write(target: &Path, content: &str, cwd: &Path) -> String {
 // =============================================================================
 
 #[test]
+fn out_of_scope_frontmatter_write_fails_open() {
+    // Walk-back fix F2 (D6 / CR-02): a full Write of `---`-fenced content
+    // OUTSIDE the watched memory locations is not ours to gate — an ordinary
+    // Jekyll/skill/manifest page with out-of-dialect frontmatter must pass
+    // silently, never exit 2. (Before the fix this exact payload was denied
+    // with "unknown top-level key `title`".)
+    let f = boot("scope-open");
+    let jekyll = "---\ntitle: My post\nlayout: post\n---\nHello world\n";
+
+    // BAD (pre-fix): outside any store → allow, silent.
+    let outside = f.base.join("blog").join("2026-07-04-post.md");
+    let out = f.hook("pre-op", &pre_op_write(&outside, jekyll, &f.base));
+    assert_eq!(
+        out.code, 0,
+        "an out-of-scope frontmatter write fails OPEN: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.is_empty(),
+        "no deny line for a non-memory write: {}",
+        out.stderr
+    );
+    // A non-.md file with fenced content (a multi-doc YAML manifest) too.
+    let manifest = f.base.join("deploy.yaml");
+    let out = f.hook(
+        "pre-op",
+        &pre_op_write(&manifest, "---\napiVersion: v1\n---\nkind: Pod\n", &f.base),
+    );
+    assert_eq!(out.code, 0, "a .yaml write is never a memory write");
+
+    // GOOD contrasts: the SAME invalid content in each WATCHED location denies.
+    let in_store = f.store.join("bad.md");
+    let out = f.hook("pre-op", &pre_op_write(&in_store, jekyll, &f.base));
+    assert_eq!(out.code, 2, "the box store is watched: {}", out.stdout);
+
+    let project_store = f.base.join(".claude/projects/-home-u-proj/memory/bad.md");
+    let out = f.hook("pre-op", &pre_op_write(&project_store, jekyll, &f.base));
+    assert_eq!(out.code, 2, "a Claude project store is watched (D-14)");
+
+    let repo_memory = f.base.join("some-repo/memory/bad.md");
+    let out = f.hook("pre-op", &pre_op_write(&repo_memory, jekyll, &f.base));
+    assert_eq!(
+        out.code, 2,
+        "a repo memory/ dir is watched (dark-memory class)"
+    );
+}
+
+#[test]
 fn deny_contract_short_circuits_stderr_exit_2_no_stdout() {
     let f = boot("deny");
     let target = f.store.join("bad.md");
