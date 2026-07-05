@@ -72,7 +72,18 @@ pub struct Metadata {
     pub last_reviewed: Option<String>,
     /// Ranking field `declineCount` (integer; consumed by recall penalties).
     pub decline_count: Option<i64>,
+    /// Host bookkeeping keys (A8): the enumerated [`HOST_META_KEYS`] allowlist
+    /// the Claude Code memory tool injects on save (`node_type`, `type`,
+    /// `originSessionId`). Tolerated, carried in document order, and re-emitted
+    /// verbatim by [`generate`] (curation's frontmatter round-trip must not
+    /// strip them). Never routing inputs, never evidence; `type` additionally
+    /// populates the flat index's reserved `type` column (Appendix A).
+    pub host_meta: Vec<(String, String)>,
 }
+
+/// The A8 host-metadata allowlist: bookkeeping keys the host memory tool
+/// injects. Closed and enumerated — growing it takes another A-entry.
+pub const HOST_META_KEYS: [&str; 3] = ["node_type", "type", "originSessionId"];
 
 /// The four trigger arrays. Absent arrays default to empty; presence of the
 /// containing `triggers:` key is tracked by [`Metadata::triggers`] being `Some`.
@@ -234,7 +245,8 @@ impl fmt::Display for FrontmatterError {
             ),
             UnknownMetadataKey { key, line } => write!(
                 f,
-                "line {line}: unknown metadata key `{key}` (allowed: tags, triggers, lastReviewed, declineCount)"
+                "line {line}: unknown metadata key `{key}` (allowed: tags, triggers, lastReviewed, \
+                 declineCount, and the A8 host keys node_type/type/originSessionId)"
             ),
             UnknownTriggerKey { key, line } => write!(
                 f,
@@ -349,6 +361,15 @@ pub fn generate(fm: &Frontmatter) -> String {
     if let Some(dc) = &fm.metadata.decline_count {
         out.push_str("  declineCount: ");
         out.push_str(&dc.to_string());
+        out.push('\n');
+    }
+    // A8 host bookkeeping keys, re-emitted verbatim in document order —
+    // curation's parse→mutate→generate round-trip must not strip them.
+    for (key, value) in &fm.metadata.host_meta {
+        out.push_str("  ");
+        out.push_str(key);
+        out.push_str(": ");
+        out.push_str(&emit_scalar(value));
         out.push('\n');
     }
     out.push_str("---\n");
@@ -831,6 +852,12 @@ fn interpret_metadata(node: Node, meta_lineno: usize) -> Result<Metadata, Frontm
                 })?;
                 meta.decline_count = Some(n);
             }
+            other if HOST_META_KEYS.contains(&other) => {
+                // A8: host bookkeeping keys — tolerated, carried in document
+                // order, re-emitted by `generate`; never routing inputs.
+                let v = expect_scalar(value, other, lineno)?;
+                meta.host_meta.push((key.clone(), v));
+            }
             other => {
                 return Err(FrontmatterError::UnknownMetadataKey {
                     key: other.to_string(),
@@ -1033,6 +1060,38 @@ fn emit_double_quoted(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a8_host_meta_keys_parse_route_and_round_trip() {
+        // A8: the Claude Code memory tool injects node_type/type/originSessionId
+        // (verbatim shape from the live box store, incl. trailing spaces after
+        // mapping keys). They must parse, never route, and survive the
+        // parse→generate round-trip (curation must not strip them).
+        let src = "---\nname: n\ndescription: d\nmetadata: \n  node_type: memory\n  type: project\n  tags: \n    - rejolt\n  triggers: \n    commands: \n      - rejolt\n  originSessionId: e9c4538a-4c12-41f1-8263-9262619f41c8\n---\nbody\n";
+        let fm = parse(src).expect("A8 host keys must parse");
+        assert_eq!(fm.metadata.tags, vec!["rejolt".to_string()]);
+        assert_eq!(
+            fm.metadata.host_meta,
+            vec![
+                ("node_type".to_string(), "memory".to_string()),
+                ("type".to_string(), "project".to_string()),
+                (
+                    "originSessionId".to_string(),
+                    "e9c4538a-4c12-41f1-8263-9262619f41c8".to_string()
+                ),
+            ]
+        );
+        // Round-trip: generate → parse preserves the host keys (order + value).
+        let regen = generate(&fm);
+        let fm2 = parse(&regen).expect("regenerated form parses");
+        assert_eq!(fm2.metadata.host_meta, fm.metadata.host_meta);
+        // Still closed-world: a key OUTSIDE the allowlist rejects.
+        let bad = "---\nname: n\nmetadata:\n  tags: [x]\n  wiretap: yes\n---\n";
+        assert!(matches!(
+            parse(bad).unwrap_err(),
+            FrontmatterError::UnknownMetadataKey { .. }
+        ));
+    }
 
     #[test]
     fn solidus_escape_is_accepted_like_the_oracle() {

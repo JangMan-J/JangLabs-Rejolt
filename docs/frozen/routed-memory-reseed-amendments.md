@@ -228,6 +228,55 @@ illegal (WORKFLOW.md G4). Same provenance discipline as D-entries.
 - Decided by: agent (S1 red-team fold, 2026-07-04); owner ratification at
   freeze; no owner call reversed.
 
+## A8. Admit the host memory tool's bookkeeping keys into the dialect
+
+- Amends: D21 / plan Appendix B2 (the frontmatter dialect's accept surface —
+  metadata key set only; tags-required, top-level-`triggers:` rejection, and
+  every other boundary rule untouched).
+- Evidence (measured at deployment, 2026-07-04, live box store
+  `~/.claude/projects/-home-jangmanj/memory`):
+  - Claude Code's own memory tool — not the Write tool — is how memories
+    "occur spontaneously" on this host (owner-stated usage model). It
+    rewrites frontmatter on save: injects `metadata.node_type: memory`,
+    `metadata.type: <class>`, `metadata.originSessionId: <uuid>`, reflows to
+    block style with trailing spaces after mapping keys. Verified identical
+    across three independent files: a fresh memory-tool save
+    (`rejolt-memory-engine-live.md`), a weeks-old box memory
+    (`multipass-fork-build.md`), and a project-store memory
+    (`grill-questions-conversational-not-dialogs.md`).
+  - Under the frozen dialect these keys reject: `rejolt check-write` denies
+    with "line 5: unknown metadata key `node_type` (allowed: tags, triggers,
+    lastReviewed, declineCount)"; rebuild classifies every such memory
+    malformed → zero routes → recall silent. Demonstrated end-to-end at
+    deployment: a dialect-valid memory with tags+triggers was saved through
+    the memory tool, landed with injected keys, and never routed.
+  - Consequence as frozen: NO spontaneously-written memory on this host can
+    ever route — the engine's core purpose fails at deployment.
+- Decision: the dialect ACCEPTS an enumerated host-metadata allowlist —
+  `node_type`, `type`, `originSessionId` — as tolerated bookkeeping keys:
+  parsed, carried, and re-emitted verbatim by `generate` (curation's
+  frontmatter round-trip must not strip them), never routing inputs, never
+  evidence. The closed-world posture is preserved: any key OUTSIDE
+  {tags, triggers, ranking fields, this allowlist} still rejects, and
+  growing the allowlist takes another A-entry. `metadata.type` additionally
+  populates the flat index's reserved `type` column (Appendix A already
+  carries that column for exactly this memory-classification field;
+  recall ranking still ignores it — no scoring change). The memory tool
+  itself remains outside the A5(c) write-capable tool set (its writes are
+  unguarded — recorded host reality, not a boundary change; the guard still
+  gates Write/Edit/MultiEdit and the routability report + curation are the
+  net for tool-written memories).
+- Rejected: (a) a box store outside the harness memory dirs — spontaneous
+  memories would never reach it (defeats the owner's stated usage model);
+  (b) tolerating ALL unknown metadata keys — reopens the anti-junkyard wall
+  D21/D22 exist to hold.
+- Affected plan items: P2 (dialect accept surface), P5 (Appendix A `type`
+  column now populated) — refs updated, trace-lint re-run.
+- Decided by: agent (deployment session, 2026-07-04), narrowing the deny
+  surface (false-deny prevention, the #1-rule direction — same class as the
+  /vet fixes); no owner-attributed call reversed. Surfaced to the owner in
+  the deployment report.
+
 ---
 
 **Ratification record — plan freeze, 2026-07-04.** Owner ratified A2–A7

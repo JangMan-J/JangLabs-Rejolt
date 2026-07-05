@@ -164,6 +164,8 @@ struct MemDisplay {
     last_reviewed: String,
     decline_count: i64,
     tags: Vec<String>,
+    /// The reserved `type` column value (A8 host `metadata.type`, else empty).
+    mem_type: String,
     path: String,
     snippet: String,
 }
@@ -176,6 +178,16 @@ fn mem_display(m: &MemoryFacts, cfg: &BuildConfig) -> MemDisplay {
         last_reviewed: sanitize_line_field(m.fm.metadata.last_reviewed.as_deref().unwrap_or("")),
         decline_count: m.fm.metadata.decline_count.unwrap_or(0),
         tags: m.fm.metadata.tags.clone(),
+        // The reserved `type` column (Appendix A): the memory-classification
+        // field, populated from the A8 host `metadata.type` when present.
+        mem_type: sanitize_line_field(
+            m.fm.metadata
+                .host_meta
+                .iter()
+                .find(|(k, _)| k == "type")
+                .map(|(_, v)| v.as_str())
+                .unwrap_or(""),
+        ),
         path: m.path.clone(),
         snippet: build_snippet(
             m.fm.description.as_deref().unwrap_or(""),
@@ -236,7 +248,7 @@ fn make_row(
         route_tag: route_tag.to_string(),
         source,
         memory_id: disp.id.clone(),
-        mem_type: String::new(), // no `type` key in the reseed frontmatter dialect
+        mem_type: disp.mem_type.clone(), // the A8 host `type` classification, else empty
         last_reviewed: disp.last_reviewed.clone(),
         decline_count: disp.decline_count,
         tags: disp.tags.clone(),
