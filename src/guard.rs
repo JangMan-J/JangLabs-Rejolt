@@ -242,6 +242,16 @@ pub struct GuardConfig {
 /// frontmatter-bearing memory OR a full-file write of the grammar file (A6);
 /// everything else fails open (allows).
 ///
+/// **Scope seam (F2, deliberate):** this function judges CONTENT for whatever
+/// target it is handed — it does NOT decide whether that target is ours to
+/// gate. Location scoping is the ADAPTER's job (`hook.rs::is_guard_scope`: the
+/// grammar file + watched memory locations, per the synapse D-14/CR-02 set);
+/// the `check-write` CLI deliberately stays unscoped (an explicit `--target`
+/// is a probe, loud by D12). Do NOT add location checks here — that would
+/// change what the probe surface and the engine tiers mean; and do NOT call
+/// this from an adapter without the scope gate — that reintroduces the F2
+/// mass false-deny of out-of-store frontmatter files.
+///
 /// - `store`: the store dir (holds the flat index + catalog report).
 /// - `target_path`: where the write lands (the independent memory/grammar check).
 /// - `proposed_content`: the full proposed file content (WP-3's `proposed_content`,
