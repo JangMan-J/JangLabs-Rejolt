@@ -220,6 +220,34 @@ fn validate_clean_findings_and_taxonomy() {
         "the finding names the file"
     );
 
+    // Dead evidence (F10): a grammar arg that normalizes to no routing key and
+    // a broad path glob both parse fine but can never route — validate must
+    // name them as findings (exit 1), not stay silent.
+    std::fs::remove_file(store.join("broken.md")).unwrap();
+    let dead_grammar = base.join("dead_grammar.toml");
+    std::fs::write(
+        &dead_grammar,
+        "grammar-version = 1\n\n[tool.gpu]\ngloss = \"g\"\nplacement = \"either\"\n\
+         commands = [\"nvidia-smi\"]\nargs = [\"--no-cache\"]\npaths = [\"~/**\"]\n",
+    )
+    .unwrap();
+    let dead = run(
+        &[
+            "validate",
+            "--store",
+            s,
+            "--grammar",
+            dead_grammar.to_str().unwrap(),
+        ],
+        "",
+    );
+    assert_eq!(dead.code, 1, "dead evidence is a finding: {}", dead.stdout);
+    assert!(
+        dead.stdout.contains("--no-cache") && dead.stdout.contains("~/**"),
+        "findings name the dead values: {}",
+        dead.stdout
+    );
+
     // An invalid grammar (synonyms-only tag) → config/taxonomy → exit 2.
     let bad_grammar = base.join("bad_grammar.toml");
     std::fs::write(

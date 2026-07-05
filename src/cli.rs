@@ -41,7 +41,8 @@ use crate::index::Index;
 use crate::normalize::parse_host_event;
 use crate::projection::{Projection, project};
 use crate::rebuild::{
-    BuildConfig, RebuildError, RebuildOutcome, index_path, rebuild, report_path, scan_store,
+    BuildConfig, MemoryFacts, RebuildError, RebuildOutcome, index_path, rebuild, report_path,
+    scan_store,
 };
 use crate::recall::{Advisory, RecallOutcome, recall};
 use crate::telemetry::Telemetry;
@@ -423,18 +424,22 @@ fn cmd_validate(store: &Path, grammar_flag: Option<&Path>) -> i32 {
             return EXIT_USAGE;
         }
     };
-    if let Err(g) = grammar::parse_and_validate(&grammar_text) {
-        eprintln!("rejolt validate: grammar error (config/taxonomy): {g}");
-        return EXIT_USAGE;
-    }
+    let grammar_obj = match grammar::parse_and_validate(&grammar_text) {
+        Ok(g) => g,
+        Err(g) => {
+            eprintln!("rejolt validate: grammar error (config/taxonomy): {g}");
+            return EXIT_USAGE;
+        }
+    };
 
     // Store findings (exit 1 if any).
     let mut findings: Vec<String> = Vec::new();
     match scan_store(store) {
-        Ok((_memories, malformed)) => {
+        Ok((memories, malformed)) => {
             for (name, _) in &malformed {
                 findings.push(format!("malformed memory file (skipped): {name}"));
             }
+            findings.extend(dead_evidence_findings(&grammar_obj, &memories));
         }
         Err(e) => findings.push(format!("store unreadable: {e}")),
     }
@@ -456,6 +461,69 @@ fn cmd_validate(store: &Path, grammar_flag: Option<&Path>) -> i32 {
         eprintln!("rejolt validate: {} finding(s)", findings.len());
         EXIT_FAIL
     }
+}
+
+/// Advisory findings for evidence that PARSES but can never route (walk-back
+/// fix F10, 2026-07-04): a command/arg/synonym whose normalized routing key is
+/// `None` (synapse `_norm` parity — non-tag-shaped values like `--no-cache`
+/// never key the index), or a §3.x-BROAD path glob (non-routing at the walk,
+/// F3). Both previously died silently — the author wrote evidence, rebuild
+/// emitted no row, and nothing said so (the D25 declared-vs-honored divergence
+/// pattern, applied to evidence instead of tunables).
+fn dead_evidence_findings(g: &grammar::Grammar, memories: &[MemoryFacts]) -> Vec<String> {
+    use crate::index::routing_key;
+    use crate::path_class::is_broad_path;
+
+    let mut out = Vec::new();
+    let mut check =
+        |owner: &str, commands: &[String], paths: &[String], args: &[String], syns: &[String]| {
+            for (axis, values) in [("commands", commands), ("args", args), ("synonyms", syns)] {
+                for v in values {
+                    if !v.trim().is_empty() && routing_key(v).is_none() {
+                        out.push(format!(
+                            "{owner}: {axis} evidence `{v}` normalizes to no routing key \
+                             — it will never route (dead evidence)"
+                        ));
+                    }
+                }
+            }
+            for p in paths {
+                if is_broad_path(p) {
+                    out.push(format!(
+                        "{owner}: path evidence `{p}` is §3.x-broad — broad globs never \
+                         route (dead evidence)"
+                    ));
+                }
+            }
+        };
+
+    for (facet, table) in [
+        ("domain", &g.domain),
+        ("tool", &g.tool),
+        ("pattern", &g.pattern),
+    ] {
+        for (tag, e) in table {
+            check(
+                &format!("grammar [{facet}.{tag}]"),
+                &e.commands,
+                &e.paths,
+                &e.args,
+                &e.synonyms,
+            );
+        }
+    }
+    for m in memories {
+        if let Some(t) = &m.fm.metadata.triggers {
+            check(
+                &format!("memory {}", m.filename),
+                &t.commands,
+                &t.paths,
+                &t.args,
+                &t.synonyms,
+            );
+        }
+    }
+    out
 }
 
 // =============================================================================
