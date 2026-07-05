@@ -436,7 +436,10 @@ pub fn build_artifacts(
         .map(|m| (m.filename.clone(), m.content.clone()))
         .collect();
     all_files.extend(malformed.iter().cloned());
-    let generation = generation_id(grammar_text, &all_files);
+    // The config tag folds artifact-shaping build config into the generation
+    // (F12) — extend it when BuildConfig grows a new byte-shaping field.
+    let config_tag = format!("maxDescriptionChars={}", cfg.max_description_chars);
+    let generation = generation_id(grammar_text, &all_files, &config_tag);
     let fingerprint = source_fingerprint(grammar_text);
 
     let report = CatalogReport {

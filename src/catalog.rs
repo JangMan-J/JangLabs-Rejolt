@@ -80,14 +80,22 @@ pub fn source_fingerprint(grammar_text: &str) -> String {
 }
 
 /// The rebuild **generation id**: a deterministic hash of the schema version,
-/// the grammar text, and the sorted `(filename, content)` of every store file
-/// scanned. Deterministic on inputs (idempotent re-runs) yet input-sensitive
-/// (torn pairs detectable). `files` need not be pre-sorted — this sorts them.
-pub fn generation_id(grammar_text: &str, files: &[(String, String)]) -> String {
+/// the build-config tag, the grammar text, and the sorted `(filename, content)`
+/// of every store file scanned. Deterministic on inputs (idempotent re-runs)
+/// yet input-sensitive (torn pairs detectable). `files` need not be pre-sorted
+/// — this sorts them.
+///
+/// `config_tag` folds in every build-config value that shapes artifact bytes
+/// (walk-back fix F12, 2026-07-04): without it, a rebuild that crashed between
+/// the index and report writes AFTER a config change left a mixed-config pair
+/// under EQUAL generation ids — a false-Consistent the A2(d) stale-pair
+/// detector exists to catch.
+pub fn generation_id(grammar_text: &str, files: &[(String, String)], config_tag: &str) -> String {
     let mut sorted: Vec<&(String, String)> = files.iter().collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
     let mut h = Fnv::new();
     h.update(&SCHEMA_VERSION.to_le_bytes()); // fixed-size, always first
+    h.field(config_tag.as_bytes());
     h.field(grammar_text.as_bytes());
     h.update(&(sorted.len() as u64).to_le_bytes()); // frame the file count
     for (name, content) in sorted {
@@ -391,15 +399,19 @@ mod tests {
     #[test]
     fn fingerprint_and_generation_are_deterministic_and_input_sensitive() {
         let files = vec![("a.md".to_string(), "A".to_string())];
-        let g1 = generation_id("gram=1", &files);
-        let g2 = generation_id("gram=1", &files);
+        let g1 = generation_id("gram=1", &files, "cfg=1");
+        let g2 = generation_id("gram=1", &files, "cfg=1");
         assert_eq!(g1, g2, "same inputs → same generation (idempotence)");
 
         // A grammar change moves the generation.
-        assert_ne!(g1, generation_id("gram=2", &files));
+        assert_ne!(g1, generation_id("gram=2", &files, "cfg=1"));
         // A store change moves the generation.
         let files2 = vec![("a.md".to_string(), "B".to_string())];
-        assert_ne!(g1, generation_id("gram=1", &files2));
+        assert_ne!(g1, generation_id("gram=1", &files2, "cfg=1"));
+        // A build-config change moves the generation (F12: a crash between the
+        // pair's two writes across a config change must read as a torn pair,
+        // never a false-Consistent).
+        assert_ne!(g1, generation_id("gram=1", &files, "cfg=2"));
         // File order does not matter (sorted internally).
         let files_ab = vec![
             ("a.md".to_string(), "A".to_string()),
@@ -409,7 +421,10 @@ mod tests {
             ("b.md".to_string(), "B".to_string()),
             ("a.md".to_string(), "A".to_string()),
         ];
-        assert_eq!(generation_id("g", &files_ab), generation_id("g", &files_ba));
+        assert_eq!(
+            generation_id("g", &files_ab, "c"),
+            generation_id("g", &files_ba, "c")
+        );
 
         assert_ne!(source_fingerprint("x"), source_fingerprint("y"));
     }
